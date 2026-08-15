@@ -1,0 +1,26 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+
+# env — NEVER commit real secrets
+.env
+.env.*
+!.env.example
+
+# hardhat
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+contracts/deployments/*.local.json
+
+# prisma
+packages/database/prisma/*.db
+
+# misc
+.DS_Store
+*.log
+.turbo/
+.pnpm-store/

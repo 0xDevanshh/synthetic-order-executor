@@ -1,0 +1,10 @@
+# Multi-stage build for the worker process.
+#
+# Deployed separately from the API because this is the only image that receives
+# EXECUTOR_PRIVATE_KEY. Keeping it off the public HTTP surface is the point.
+#
+# TODO(impl): same build as the backend image, entrypoint apps/worker/dist/index.js,
+#             and a SIGTERM grace period long enough for an in-flight
+#             execute-order job to finish.
+FROM node:20-alpine AS base
+WORKDIR /app

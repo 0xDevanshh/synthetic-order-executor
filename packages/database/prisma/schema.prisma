@@ -1,0 +1,178 @@
+// Neon serverless PostgreSQL.
+//   DATABASE_URL        -> pooled connection (PgBouncer) used by the apps
+//   DIRECT_DATABASE_URL -> direct connection required for migrations
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum OrderStatus {
+  PENDING
+  TRIGGERED
+  EXECUTING
+  EXECUTED
+  FAILED
+  CANCELLED
+}
+
+enum OrderSide {
+  SELL
+  BUY
+}
+
+enum TriggerType {
+  PRICE_BELOW
+  PRICE_ABOVE
+}
+
+enum TxStatus {
+  SUBMITTED
+  MINED_SUCCESS
+  MINED_REVERTED
+  DROPPED
+  REPLACED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  /// Checksummed EVM address.
+  address   String   @unique
+  orders    Order[]
+  createdAt DateTime @default(now())
+
+  @@map("users")
+}
+
+model Order {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  side OrderSide
+
+  // ---- signed intent (mirrors SyntheticOrderExecutor.Order) ----
+  tokenIn      String
+  tokenOut     String
+  /// Base units (wei). Decimal(78,0) holds a full uint256 exactly — never floats.
+  amountIn     Decimal @db.Decimal(78, 0)
+  /// The user's hard floor. The executor may only tighten this.
+  minAmountOut Decimal @db.Decimal(78, 0)
+  expiry       DateTime
+  onchainNonce BigInt
+
+  /// EIP-712 digest. Global idempotency key, shared with the contract's
+  /// consumedOrders mapping.
+  orderHash String @unique
+  signature String
+
+  // ---- off-chain trigger (the contract knows nothing about this) ----
+  pricePair    String      @default("ETH/USD")
+  triggerType  TriggerType
+  triggerPrice Decimal     @db.Decimal(36, 18)
+
+  // ---- lifecycle ----
+  status  OrderStatus @default(PENDING)
+  /// Optimistic lock. The atomic claim is:
+  ///   UPDATE orders SET status='EXECUTING', version=version+1
+  ///   WHERE id=$1 AND status='TRIGGERED' AND version=$2
+  /// Zero rows updated means another worker won the race.
+  version Int         @default(0)
+
+  triggeredAt          DateTime?
+  /// Price observed when the trigger fired, kept for post-hoc audit.
+  triggerPriceObserved Decimal?  @db.Decimal(36, 18)
+  executedAt           DateTime?
+  failureReason        String?
+  attemptCount         Int       @default(0)
+
+  attempts  ExecutionAttempt[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  /// Drives the trigger evaluator's hot query.
+  @@index([status, triggerType, triggerPrice])
+  @@index([userId, status])
+  /// A user can never reuse an on-chain nonce.
+  @@unique([userId, onchainNonce])
+  @@map("orders")
+}
+
+model ExecutionAttempt {
+  id      String @id @default(uuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  attemptNumber Int
+
+  quotedAmountOut Decimal  @db.Decimal(78, 0)
+  runtimeMinOut   Decimal  @db.Decimal(78, 0)
+  poolFee         Int
+  deadline        DateTime
+
+  /// Executor EOA nonce, allocated under the Redis mutex.
+  nonce             Int
+  /// Persisted BEFORE broadcast. A sent transaction can never go unrecorded.
+  txHash            String?   @unique
+  txStatus          TxStatus?
+  blockNumber       BigInt?
+  gasUsed           BigInt?
+  effectiveGasPrice BigInt?
+  /// Read from the OrderExecuted event, not from the quote.
+  actualAmountOut   Decimal?  @db.Decimal(78, 0)
+  /// Decoded custom error name, e.g. "OrderAlreadyConsumed".
+  revertReason      String?
+  failureClass      String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([orderId, attemptNumber])
+  @@index([txStatus])
+  @@map("execution_attempts")
+}
+
+model PriceTick {
+  id      BigInt  @id @default(autoincrement())
+  pair    String
+  price   Decimal @db.Decimal(36, 18)
+  source  String
+  roundId BigInt?
+
+  /// Oracle-reported update time, not our poll time.
+  updatedAt DateTime
+  /// Failed a staleness / round-completeness / divergence check.
+  /// Suspect ticks are stored for audit but never fire a trigger.
+  suspect       Boolean  @default(false)
+  suspectReason String?
+  observedAt    DateTime @default(now())
+
+  @@index([pair, observedAt])
+  @@map("price_ticks")
+}
+
+/// Every repair the reconciler makes is logged. Silent self-healing destroys
+/// the ability to debug an execution engine.
+model ReconciliationLog {
+  id          String   @id @default(uuid())
+  orderId     String?
+  kind        String
+  discrepancy String
+  resolution  String
+  createdAt   DateTime @default(now())
+
+  @@index([orderId])
+  @@map("reconciliation_logs")
+}
+
+/// Last block scanned for OrderExecuted logs, with a reorg buffer.
+model IndexerCheckpoint {
+  id                 String   @id @default("default")
+  lastProcessedBlock BigInt
+  updatedAt          DateTime @updatedAt
+
+  @@map("indexer_checkpoints")
+}

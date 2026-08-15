@@ -1,0 +1,7 @@
+# Multi-stage build for the API process.
+#
+# TODO(impl): pnpm fetch -> install workspace -> prisma generate -> tsc build
+#             -> distroless/alpine runtime, non-root user, HEALTHCHECK on
+#             /health. Never bake .env into the image.
+FROM node:20-alpine AS base
+WORKDIR /app

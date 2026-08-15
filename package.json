@@ -1,0 +1,37 @@
+{
+  "name": "synthetic-order-executor",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Synthetic trading order engine: off-chain trigger detection, on-chain constrained execution via Uniswap on Ethereum Sepolia.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:contracts": "pnpm --filter @soe/contracts test",
+    "test:backend": "pnpm --filter @soe/backend test",
+    "test:worker": "pnpm --filter @soe/worker test",
+    "dev": "concurrently -n api,worker,web -c blue,magenta,green \"pnpm dev:backend\" \"pnpm dev:worker\" \"pnpm dev:frontend\"",
+    "dev:backend": "pnpm --filter @soe/backend dev",
+    "dev:worker": "pnpm --filter @soe/worker dev",
+    "dev:frontend": "pnpm --filter @soe/frontend dev",
+    "db:generate": "pnpm --filter @soe/database generate",
+    "db:migrate": "pnpm --filter @soe/database migrate",
+    "db:studio": "pnpm --filter @soe/database studio",
+    "contracts:build": "pnpm --filter @soe/contracts build",
+    "contracts:deploy:sepolia": "pnpm --filter @soe/contracts deploy:sepolia",
+    "contracts:configure:sepolia": "pnpm --filter @soe/contracts configure:sepolia",
+    "abi:sync": "pnpm --filter @soe/contracts abi:export",
+    "infra:up": "docker compose -f infra/docker/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker/docker-compose.yml down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}
