@@ -3,7 +3,7 @@ import { prisma } from '@soe/database';
 
 import { createApp } from './app.js';
 import { loadEnv } from './config/env.js';
-import { assertCorrectChain } from './blockchain/clients.js';
+import { assertCorrectChain } from './blockchain/executor.js';
 import { logger } from './lib/logger.js';
 
 /**

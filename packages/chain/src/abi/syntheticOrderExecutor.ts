@@ -1,12 +1,7 @@
 /**
- * SyntheticOrderExecutor ABI.
- *
- * GENERATED from contracts/artifacts by `pnpm abi:sync`. Do not hand-edit —
- * regenerate after every contract change so the TypeScript side cannot drift
- * from the deployed bytecode.
- *
- * `as const` is required: it is what gives viem full argument and return
- * type inference for every call.
+ * SyntheticOrderExecutor ABI — GENERATED from contracts/artifacts.
+ * Regenerate with `pnpm abi:sync` after any contract change.
+ * `as const` is what gives viem full call/return type inference.
  */
 export const syntheticOrderExecutorAbi = [
   {

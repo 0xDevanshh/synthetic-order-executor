@@ -13,10 +13,8 @@ import {
   ValidationError,
 } from '../domain/errors.js';
 import { resolveToken } from '../config/tokens.js';
-import {
-  getContractClient,
-  type SyntheticOrderExecutorClient,
-} from '../blockchain/contractClient.js';
+import type { ExecutorContractClient } from '@soe/chain';
+import { getExecutorClient } from '../blockchain/executor.js';
 import type { CreateOrderInput, ListOrdersQuery } from '../api/schemas/order.schema.js';
 
 /**
@@ -29,7 +27,7 @@ import type { CreateOrderInput, ListOrdersQuery } from '../api/schemas/order.sch
 export class OrderService {
   constructor(
     private readonly repo: OrderRepository = orderRepository,
-    private readonly contract: () => SyntheticOrderExecutorClient = getContractClient,
+    private readonly contract: () => ExecutorContractClient = getExecutorClient,
   ) {}
 
   /**
@@ -54,8 +52,8 @@ export class OrderService {
     }
 
     const contract = this.contract();
-    const config = await contract.getConfig();
-    if (config.paused) throw new ContractPausedError();
+    const state = await contract.getState();
+    if (state.paused) throw new ContractPausedError();
 
     const [inAllowed, outAllowed, maxTradeAmount] = await Promise.all([
       contract.isTokenAllowed(tokenIn.address),

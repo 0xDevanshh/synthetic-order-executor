@@ -1,0 +1,154 @@
+import { getAddress, parseUnits, type Address, type Hex } from 'viem';
+import type {
+  BuildParamsInput,
+  ChainConfig,
+  DexAdapter,
+  DexQuote,
+  ExecutionParams,
+  ExecutionReceipt,
+  ExecutorContractClient,
+  QuoteRequest,
+} from '@soe/chain';
+
+export const WETH = getAddress('0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14');
+export const USDC = getAddress('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238');
+export const EXECUTOR_EOA = getAddress('0x5177f5d8A906cD03CC2387a1F582E5E486b27314');
+export const CONTRACT = getAddress('0x34C7244383f129957e631706AA420D5CFF721c35');
+
+export const testChainConfig: ChainConfig = {
+  chainId: 11155111,
+  rpcUrls: ['https://sepolia.example.invalid'],
+  executorContract: CONTRACT,
+  swapRouter: getAddress('0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E'),
+  quoterV2: getAddress('0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3'),
+  factory: getAddress('0x0227628f3F023bb0B980b67D528571c95c6DaC1c'),
+  feeTiers: [500, 3000, 10000],
+  weth: WETH,
+  usdc: USDC,
+  slippageBps: 100,
+  deadlineWindowSec: 120,
+  maxFeePerGasGwei: 100,
+};
+
+/** Executor client stand-in with every branch a test needs to drive. */
+export class FakeExecutorClient {
+  paused = false;
+  executed = new Set<string>();
+  balances = new Map<string, bigint>();
+  executorAddress: Address | undefined = EXECUTOR_EOA;
+  hasSigner = true;
+
+  /** Set to make execute() report a reverted transaction. */
+  revert = false;
+  /** Set to make execute() throw, as an RPC failure would. */
+  throwOnExecute: Error | undefined;
+  /** Marks the id consumed on-chain when execute throws, simulating a landed tx. */
+  landsDespiteThrow = false;
+
+  submitted: ExecutionParams[] = [];
+  txHash: Hex = `0x${'ab'.repeat(32)}`;
+
+  setBalance(user: Address, token: Address, amount: bigint): void {
+    this.balances.set(`${getAddress(user)}:${getAddress(token)}`, amount);
+  }
+
+  async isExecuted(executionId: Hex): Promise<boolean> {
+    return this.executed.has(executionId.toLowerCase());
+  }
+
+  async getBalance(user: Address, token: Address): Promise<bigint> {
+    return this.balances.get(`${getAddress(user)}:${getAddress(token)}`) ?? 0n;
+  }
+
+  async getState() {
+    return {
+      paused: this.paused,
+      executor: EXECUTOR_EOA,
+      swapRouter: testChainConfig.swapRouter,
+      weth: WETH,
+    };
+  }
+
+  async simulate(): Promise<bigint> {
+    return parseUnits('34.9', 6);
+  }
+
+  async execute(
+    params: ExecutionParams,
+    onSubmitted?: (txHash: Hex) => Promise<void>,
+  ): Promise<ExecutionReceipt> {
+    this.submitted.push(params);
+
+    // Faithful to the real client: the hash is handed over BEFORE broadcast.
+    if (onSubmitted) await onSubmitted(this.txHash);
+
+    if (this.throwOnExecute) {
+      if (this.landsDespiteThrow) this.executed.add(params.executionId.toLowerCase());
+      throw this.throwOnExecute;
+    }
+
+    this.executed.add(params.executionId.toLowerCase());
+
+    return {
+      txHash: this.txHash,
+      blockNumber: 11_500_000n,
+      gasUsed: 210_000n,
+      success: !this.revert,
+      amountOut: this.revert ? undefined : parseUnits('34.9', 6),
+      revertReason: this.revert ? 'SlippageExceeded' : undefined,
+    };
+  }
+}
+
+/** DEX adapter stand-in that records what it was asked for. */
+export class FakeDexAdapter implements DexAdapter {
+  readonly name = 'fake-dex';
+
+  quotedAmountOut = parseUnits('35', 6);
+  poolFee = 3000;
+  quoteError: Error | undefined;
+  quoteRequests: QuoteRequest[] = [];
+  builtParams: ExecutionParams[] = [];
+
+  constructor(private readonly executor: FakeExecutorClient) {}
+
+  async getQuote(request: QuoteRequest): Promise<DexQuote> {
+    if (this.quoteError) throw this.quoteError;
+    this.quoteRequests.push(request);
+    return {
+      tokenIn: request.tokenIn,
+      tokenOut: request.tokenOut,
+      amountIn: request.amountIn,
+      amountOut: this.quotedAmountOut,
+      poolFee: this.poolFee,
+      gasEstimate: 150_000n,
+      quotedAt: new Date(),
+    };
+  }
+
+  buildExecutionParams(input: BuildParamsInput): ExecutionParams {
+    const params: ExecutionParams = {
+      executionId: input.executionId,
+      owner: input.owner,
+      tokenIn: input.quote.tokenIn,
+      tokenOut: input.quote.tokenOut,
+      poolFee: input.quote.poolFee,
+      amountIn: input.quote.amountIn,
+      minAmountOut: (input.quote.amountOut * 9_900n) / 10_000n,
+      deadline: BigInt(Math.floor(Date.now() / 1000)) + 120n,
+    };
+    this.builtParams.push(params);
+    return params;
+  }
+
+  async execute(
+    params: ExecutionParams,
+    onSubmitted?: (txHash: Hex) => Promise<void>,
+  ): Promise<ExecutionReceipt> {
+    return this.executor.execute(params, onSubmitted);
+  }
+}
+
+export function asExecutorClient(fake: FakeExecutorClient): ExecutorContractClient {
+  return fake as unknown as ExecutorContractClient;
+}

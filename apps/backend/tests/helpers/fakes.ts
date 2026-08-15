@@ -1,11 +1,7 @@
 import { getAddress, parseUnits, type Address, type Hex } from 'viem';
 import { Prisma, type Order, type OrderStatus, type OrderSide } from '@soe/database';
 
-import type {
-  ContractConfig,
-  ExecuteSwapParams,
-  SyntheticOrderExecutorClient,
-} from '../../src/blockchain/contractClient.js';
+import type { ExecutionParams, ExecutorContractClient } from '@soe/chain';
 import type {
   CreateOrderData,
   ListOrderFilters,
@@ -24,7 +20,7 @@ export const EXECUTOR = getAddress('0x5177f5d8A906cD03CC2387a1F582E5E486b27314')
  * payoff of depending on the SyntheticOrderExecutorClient interface rather than
  * on viem directly.
  */
-export class FakeContractClient implements SyntheticOrderExecutorClient {
+export class FakeContractClient {
   readonly address = getAddress('0x34C7244383f129957e631706AA420D5CFF721c35');
 
   paused = false;
@@ -39,7 +35,7 @@ export class FakeContractClient implements SyntheticOrderExecutorClient {
   simulateError: Error | undefined;
 
   /** Records what the service actually asked the chain to do. */
-  lastSimulatedParams: ExecuteSwapParams | undefined;
+  lastSimulatedParams: ExecutionParams | undefined;
 
   async isExecuted(executionId: Hex): Promise<boolean> {
     return this.executed.has(executionId.toLowerCase());
@@ -57,7 +53,7 @@ export class FakeContractClient implements SyntheticOrderExecutorClient {
     return this.balances.get(`${getAddress(user)}:${getAddress(token)}`) ?? 0n;
   }
 
-  async getConfig(): Promise<ContractConfig> {
+  async getState() {
     return {
       paused: this.paused,
       executor: EXECUTOR,
@@ -66,7 +62,7 @@ export class FakeContractClient implements SyntheticOrderExecutorClient {
     };
   }
 
-  async simulateExecuteSwap(params: ExecuteSwapParams): Promise<bigint> {
+  async simulate(params: ExecutionParams): Promise<bigint> {
     this.lastSimulatedParams = params;
     if (this.simulateError) throw this.simulateError;
     return this.simulateResult;
@@ -168,4 +164,8 @@ export function validOrderInput(overrides: Partial<Record<string, string>> = {})
     triggerPrice: '3500',
     ...overrides,
   };
+}
+
+export function asContractClient(fake: FakeContractClient): ExecutorContractClient {
+  return fake as unknown as ExecutorContractClient;
 }

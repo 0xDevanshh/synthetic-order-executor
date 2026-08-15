@@ -1,9 +1,7 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { prisma } from '@soe/database';
 
-import { getPublicClient } from '../../blockchain/clients.js';
-import { getContractClient } from '../../blockchain/contractClient.js';
-import { loadEnv } from '../../config/env.js';
+import { getPublicClient, getExecutorClient, getChainConfig } from '../../blockchain/executor.js';
 
 export const healthRoutes: ExpressRouter = Router();
 
@@ -20,7 +18,7 @@ healthRoutes.get('/', (_req, res) => {
  * different responses from whoever is paged.
  */
 healthRoutes.get('/deep', async (_req, res) => {
-  const env = loadEnv();
+  const chain = getChainConfig();
   const checks: Record<string, { ok: boolean; detail?: string }> = {};
 
   try {
@@ -33,7 +31,7 @@ healthRoutes.get('/deep', async (_req, res) => {
   try {
     const chainId = await getPublicClient().getChainId();
     checks.rpc = {
-      ok: chainId === env.CHAIN_ID,
+      ok: chainId === chain.chainId,
       detail: `chainId=${chainId}`,
     };
   } catch (error) {
@@ -41,7 +39,7 @@ healthRoutes.get('/deep', async (_req, res) => {
   }
 
   try {
-    const config = await getContractClient().getConfig();
+    const config = await getExecutorClient().getState();
     checks.contract = {
       ok: !config.paused,
       detail: config.paused ? 'contract is PAUSED' : `executor=${config.executor}`,

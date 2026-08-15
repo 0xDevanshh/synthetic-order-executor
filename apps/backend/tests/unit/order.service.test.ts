@@ -14,6 +14,7 @@ import {
 } from '../../src/domain/errors.js';
 import {
   FakeContractClient,
+  asContractClient,
   FakeOrderRepository,
   USER,
   WETH,
@@ -28,7 +29,7 @@ describe('OrderService', () => {
   beforeEach(() => {
     repo = new FakeOrderRepository();
     contract = new FakeContractClient();
-    service = new OrderService(repo as unknown as OrderRepository, () => contract);
+    service = new OrderService(repo as unknown as OrderRepository, () => asContractClient(contract));
   });
 
   describe('createOrder', () => {

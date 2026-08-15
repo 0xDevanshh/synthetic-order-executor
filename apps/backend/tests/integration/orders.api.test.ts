@@ -8,6 +8,7 @@ import { OrderService } from '../../src/services/order.service.js';
 import type { OrderRepository } from '@soe/core';
 import {
   FakeContractClient,
+  asContractClient,
   FakeOrderRepository,
   USER,
   WETH,
@@ -28,7 +29,7 @@ describe('orders API', () => {
   beforeEach(() => {
     repo = new FakeOrderRepository();
     contract = new FakeContractClient();
-    service = new OrderService(repo as unknown as OrderRepository, () => contract);
+    service = new OrderService(repo as unknown as OrderRepository, () => asContractClient(contract));
     app = createApp({ orderController: new OrderController(service) });
   });
 

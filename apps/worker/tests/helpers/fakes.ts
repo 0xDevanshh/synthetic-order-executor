@@ -81,11 +81,21 @@ export class FakeOrderRepository {
       .slice(0, limit);
   }
 
+  async recordTxHash(id: string, txHash: string): Promise<Order | null> {
+    const order = this.orders.get(id);
+    if (!order || order.status !== 'EXECUTING') return null;
+    const updated: Order = { ...order, txHash, updatedAt: new Date() };
+    this.orders.set(id, updated);
+    return updated;
+  }
+
   async transitionStatus(params: {
     id: string;
     expectedStatus: OrderStatus;
     expectedVersion: number;
     nextStatus: OrderStatus;
+    txHash?: string | null;
+    errorMessage?: string | null;
   }): Promise<Order | null> {
     if (this.stealNext > 0) {
       this.stealNext -= 1;
@@ -103,6 +113,8 @@ export class FakeOrderRepository {
       ...order,
       status: params.nextStatus,
       version: order.version + 1,
+      ...(params.txHash !== undefined ? { txHash: params.txHash } : {}),
+      ...(params.errorMessage !== undefined ? { errorMessage: params.errorMessage } : {}),
       updatedAt: new Date(),
     };
     this.orders.set(params.id, updated);

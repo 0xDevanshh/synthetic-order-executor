@@ -94,6 +94,27 @@ export class OrderRepository {
   }
 
   /**
+   * Record a transaction hash against an order already claimed as EXECUTING.
+   *
+   * Separate from `transitionStatus` on purpose: this is not a state change, it
+   * is attaching evidence to the current state. Routing it through the
+   * transition method would mean an EXECUTING -> EXECUTING "transition", which
+   * the state machine rightly considers illegal.
+   *
+   * Called BEFORE the transaction is broadcast, so a transaction can never exist
+   * on the network that this database has no record of.
+   */
+  async recordTxHash(id: string, txHash: string): Promise<Order | null> {
+    const result = await this.db.order.updateMany({
+      where: { id, status: 'EXECUTING' },
+      data: { txHash },
+    });
+
+    if (result.count === 0) return null;
+    return this.findById(id);
+  }
+
+  /**
    * Orders eligible for triggering. Used by the price watcher once it exists.
    *
    * SELL fires when the market falls to or below the trigger; BUY when it rises
