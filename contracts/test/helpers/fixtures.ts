@@ -95,6 +95,29 @@ export async function deployExecutorFixture() {
   };
 }
 
+/**
+ * Typed accessor for decoded event arguments.
+ *
+ * hardhat-viem returns a generic `Abi`, so event args come back as
+ * `Record<string, unknown>`. Narrowing here in one place keeps the assertions
+ * themselves readable and type-checked.
+ */
+export function eventArgs<T>(event: { args: unknown }): T {
+  return event.args as T;
+}
+
+export interface SwapExecutedArgs {
+  executionId: `0x${string}`;
+  owner: Address;
+  executorAddress: Address;
+  tokenIn: Address;
+  tokenOut: Address;
+  amountIn: bigint;
+  amountOut: bigint;
+  minAmountOut: bigint;
+  poolFee: number;
+}
+
 /** Deterministic execution ids, so tests read clearly. */
 export function executionId(label: string): `0x${string}` {
   const hex = Buffer.from(label).toString('hex').padEnd(64, '0').slice(0, 64);

@@ -1,0 +1,27 @@
+{
+  "contractName": "SyntheticOrderExecutor",
+  "address": "0x34C7244383f129957e631706AA420D5CFF721c35",
+  "deploymentTxHash": "0x5f73852b8ad91104c110e5a49a1dbb25d64c07138eb8c1a03b7008a4d807f8de",
+  "blockNumber": "11496492",
+  "network": "sepolia",
+  "chainId": 11155111,
+  "deployer": "0xF3F3E3827999FBab96c4097DB046702bBbA2E45A",
+  "admin": "0xF3F3E3827999FBab96c4097DB046702bBbA2E45A",
+  "executor": "0x5177f5d8A906cD03CC2387a1F582E5E486b27314",
+  "constructorArgs": {
+    "swapRouter": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+    "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+    "admin": "0xF3F3E3827999FBab96c4097DB046702bBbA2E45A",
+    "executor": "0x0000000000000000000000000000000000000000"
+  },
+  "compiler": {
+    "version": "0.8.24",
+    "optimizer": true,
+    "runs": 200,
+    "viaIR": true
+  },
+  "gitCommit": "48e00cf7eb25369d885ab7f419e88f6706277018",
+  "deployedAt": "2026-08-15T20:27:31.278Z",
+  "bytecodeVerified": true,
+  "etherscanVerified": false
+}

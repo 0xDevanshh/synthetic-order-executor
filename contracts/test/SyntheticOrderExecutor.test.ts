@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import hre from 'hardhat';
 import { loadFixture } from '@nomicfoundation/hardhat-network-helpers';
-import { parseUnits, zeroAddress, getAddress } from 'viem';
+import { parseUnits, zeroAddress, getAddress, type Address } from 'viem';
 
 import {
   deployExecutorFixture,
@@ -11,6 +11,8 @@ import {
   MAX_TRADE_WETH,
   ONE_WETH,
   POOL_FEE,
+  eventArgs,
+  type SwapExecutedArgs,
 } from './helpers/fixtures';
 
 /**
@@ -654,7 +656,7 @@ describe('SyntheticOrderExecutor', () => {
       const { soe, router, tokenIn, tokenOut, admin, executor, user } =
         await loadFixture(deployExecutorFixture);
 
-      await soe.write.pause({ account: admin.account });
+      await soe.write.pause([], { account: admin.account });
       await router.write.setNextAmountOut([QUOTED_OUT]);
 
       await expectRevert(
@@ -678,7 +680,7 @@ describe('SyntheticOrderExecutor', () => {
     it('rejects deposits while paused', async () => {
       const { soe, tokenIn, admin, user } = await loadFixture(deployExecutorFixture);
 
-      await soe.write.pause({ account: admin.account });
+      await soe.write.pause([], { account: admin.account });
       await tokenIn.write.approve([soe.address, ONE_WETH], { account: user.account });
 
       await expectRevert(
@@ -690,7 +692,7 @@ describe('SyntheticOrderExecutor', () => {
     it('STILL ALLOWS withdrawals while paused — a pause must never trap funds', async () => {
       const { soe, tokenIn, admin, user } = await loadFixture(deployExecutorFixture);
 
-      await soe.write.pause({ account: admin.account });
+      await soe.write.pause([], { account: admin.account });
       await soe.write.withdraw([tokenIn.address, ONE_WETH], { account: user.account });
 
       expect(await soe.read.balances([user.account.address, tokenIn.address])).to.equal(0n);
@@ -701,8 +703,8 @@ describe('SyntheticOrderExecutor', () => {
       const { soe, router, tokenIn, tokenOut, admin, executor, user } =
         await loadFixture(deployExecutorFixture);
 
-      await soe.write.pause({ account: admin.account });
-      await soe.write.unpause({ account: admin.account });
+      await soe.write.pause([], { account: admin.account });
+      await soe.write.unpause([], { account: admin.account });
       await router.write.setNextAmountOut([QUOTED_OUT]);
 
       await soe.write.executeSwap(
@@ -727,7 +729,7 @@ describe('SyntheticOrderExecutor', () => {
     it('only PAUSER_ROLE can pause', async () => {
       const { soe, other } = await loadFixture(deployExecutorFixture);
       await expectRevert(
-        soe.write.pause({ account: other.account }),
+        soe.write.pause([], { account: other.account }),
         'AccessControlUnauthorizedAccount',
       );
     });
@@ -737,11 +739,11 @@ describe('SyntheticOrderExecutor', () => {
 
       const pauserRole = await soe.read.PAUSER_ROLE();
       await soe.write.grantRole([pauserRole, other.account.address], { account: admin.account });
-      await soe.write.pause({ account: other.account });
+      await soe.write.pause([], { account: other.account });
 
       // Pausing is cheap, resuming is deliberate.
       await expectRevert(
-        soe.write.unpause({ account: other.account }),
+        soe.write.unpause([], { account: other.account }),
         'AccessControlUnauthorizedAccount',
       );
     });
@@ -959,12 +961,12 @@ describe('SyntheticOrderExecutor', () => {
       const events = await soe.getEvents.SwapExecuted();
       expect(events).to.have.lengthOf(1);
 
-      const { args } = events[0];
+      const args = eventArgs<SwapExecutedArgs>(events[0]);
       expect(args.executionId).to.equal(id);
-      expect(getAddress(args.owner!)).to.equal(getAddress(user.account.address));
-      expect(getAddress(args.executorAddress!)).to.equal(getAddress(executor.account.address));
-      expect(getAddress(args.tokenIn!)).to.equal(getAddress(tokenIn.address));
-      expect(getAddress(args.tokenOut!)).to.equal(getAddress(tokenOut.address));
+      expect(getAddress(args.owner)).to.equal(getAddress(user.account.address));
+      expect(getAddress(args.executorAddress)).to.equal(getAddress(executor.account.address));
+      expect(getAddress(args.tokenIn)).to.equal(getAddress(tokenIn.address));
+      expect(getAddress(args.tokenOut)).to.equal(getAddress(tokenOut.address));
       expect(args.amountIn).to.equal(HALF_WETH);
       // The ACTUAL amount out, which is what reconciliation depends on.
       expect(args.amountOut).to.equal(QUOTED_OUT);
@@ -979,10 +981,9 @@ describe('SyntheticOrderExecutor', () => {
 
       const events = await soe.getEvents.ExecutorUpdated();
       expect(events).to.have.lengthOf(1);
-      expect(getAddress(events[0].args.previousExecutor!)).to.equal(
-        getAddress(executor.account.address),
-      );
-      expect(getAddress(events[0].args.newExecutor!)).to.equal(getAddress(other.account.address));
+      const args = eventArgs<{ previousExecutor: Address; newExecutor: Address }>(events[0]);
+      expect(getAddress(args.previousExecutor)).to.equal(getAddress(executor.account.address));
+      expect(getAddress(args.newExecutor)).to.equal(getAddress(other.account.address));
     });
 
     it('emits TokenAllowed with the configured cap', async () => {
@@ -993,8 +994,9 @@ describe('SyntheticOrderExecutor', () => {
 
       const events = await soe.getEvents.TokenAllowed();
       expect(events).to.have.lengthOf(1);
-      expect(getAddress(events[0].args.token!)).to.equal(getAddress(token.address));
-      expect(events[0].args.maxTradeAmount).to.equal(ONE_WETH);
+      const args = eventArgs<{ token: Address; maxTradeAmount: bigint }>(events[0]);
+      expect(getAddress(args.token)).to.equal(getAddress(token.address));
+      expect(args.maxTradeAmount).to.equal(ONE_WETH);
     });
 
     it('emits TokenRemoved', async () => {
@@ -1004,7 +1006,9 @@ describe('SyntheticOrderExecutor', () => {
 
       const events = await soe.getEvents.TokenRemoved();
       expect(events).to.have.lengthOf(1);
-      expect(getAddress(events[0].args.token!)).to.equal(getAddress(tokenIn.address));
+      expect(getAddress(eventArgs<{ token: Address }>(events[0]).token)).to.equal(
+        getAddress(tokenIn.address),
+      );
     });
 
     it('emits MaxTradeAmountUpdated with both the old and new cap', async () => {
@@ -1015,17 +1019,18 @@ describe('SyntheticOrderExecutor', () => {
 
       const events = await soe.getEvents.MaxTradeAmountUpdated();
       expect(events).to.have.lengthOf(1);
-      expect(events[0].args.previousAmount).to.equal(MAX_TRADE_WETH);
-      expect(events[0].args.newAmount).to.equal(newCap);
+      const args = eventArgs<{ previousAmount: bigint; newAmount: bigint }>(events[0]);
+      expect(args.previousAmount).to.equal(MAX_TRADE_WETH);
+      expect(args.newAmount).to.equal(newCap);
     });
 
     it('emits Paused and Unpaused', async () => {
       const { soe, admin } = await loadFixture(deployExecutorFixture);
 
-      await soe.write.pause({ account: admin.account });
+      await soe.write.pause([], { account: admin.account });
       expect(await soe.getEvents.Paused()).to.have.lengthOf(1);
 
-      await soe.write.unpause({ account: admin.account });
+      await soe.write.unpause([], { account: admin.account });
       expect(await soe.getEvents.Unpaused()).to.have.lengthOf(1);
     });
 
@@ -1035,7 +1040,7 @@ describe('SyntheticOrderExecutor', () => {
       await soe.write.withdraw([tokenIn.address, ONE_WETH], { account: user.account });
       const events = await soe.getEvents.Withdrawn();
       expect(events).to.have.lengthOf(1);
-      expect(events[0].args.amount).to.equal(ONE_WETH);
+      expect(eventArgs<{ amount: bigint }>(events[0]).amount).to.equal(ONE_WETH);
     });
   });
 
@@ -1196,7 +1201,7 @@ describe('SyntheticOrderExecutor', () => {
       const { soe, weth, user } = await loadFixture(deployExecutorFixture);
 
       const amount = parseUnits('2', 18);
-      await soe.write.depositETH({ account: user.account, value: amount });
+      await soe.write.depositETH([], { account: user.account, value: amount });
 
       expect(await soe.read.balances([user.account.address, weth.address])).to.equal(amount);
       expect(await weth.read.balanceOf([soe.address])).to.equal(amount);
@@ -1210,7 +1215,7 @@ describe('SyntheticOrderExecutor', () => {
     it('rejects a zero-value ETH deposit', async () => {
       const { soe, user } = await loadFixture(deployExecutorFixture);
       await expectRevert(
-        soe.write.depositETH({ account: user.account, value: 0n }),
+        soe.write.depositETH([], { account: user.account, value: 0n }),
         'ZeroAmount',
       );
     });

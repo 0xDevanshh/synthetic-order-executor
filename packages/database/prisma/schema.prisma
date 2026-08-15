@@ -1,6 +1,6 @@
 // Neon serverless PostgreSQL.
-//   DATABASE_URL        -> pooled connection (PgBouncer) used by the apps
-//   DIRECT_DATABASE_URL -> direct connection required for migrations
+//   DATABASE_URL        -> pooled connection (PgBouncer), used by the apps
+//   DIRECT_DATABASE_URL -> direct connection, required for migrations
 generator client {
   provider = "prisma-client-js"
 }
@@ -21,158 +21,57 @@ enum OrderStatus {
 }
 
 enum OrderSide {
-  SELL
   BUY
-}
-
-enum TriggerType {
-  PRICE_BELOW
-  PRICE_ABOVE
-}
-
-enum TxStatus {
-  SUBMITTED
-  MINED_SUCCESS
-  MINED_REVERTED
-  DROPPED
-  REPLACED
-}
-
-model User {
-  id        String   @id @default(uuid())
-  /// Checksummed EVM address.
-  address   String   @unique
-  orders    Order[]
-  createdAt DateTime @default(now())
-
-  @@map("users")
+  SELL
 }
 
 model Order {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id])
+  id String @id
+
+  /// Checksummed EVM address of the order owner. Also the `owner` argument
+  /// passed to SyntheticOrderExecutor.executeSwap, so the contract debits and
+  /// credits the right vault balance.
+  userAddress String
+
+  /// Token symbols as the API speaks them ("ETH", "USDC"). Resolved to
+  /// addresses and decimals at execution time via the token registry, so a
+  /// redeployment to different token addresses does not rewrite stored orders.
+  tokenIn  String
+  tokenOut String
 
   side OrderSide
 
-  // ---- signed intent (mirrors SyntheticOrderExecutor.Order) ----
-  tokenIn      String
-  tokenOut     String
-  /// Base units (wei). Decimal(78,0) holds a full uint256 exactly — never floats.
-  amountIn     Decimal @db.Decimal(78, 0)
-  /// The user's hard floor. The executor may only tighten this.
-  minAmountOut Decimal @db.Decimal(78, 0)
-  expiry       DateTime
-  onchainNonce BigInt
+  /// Human-readable units, e.g. "0.01" ETH. Converted to base units only when
+  /// building calldata. Decimal, never float — a float cannot hold 0.1 exactly
+  /// and this value is what the user is committing funds against.
+  amount Decimal @db.Decimal(38, 18)
 
-  /// EIP-712 digest. Global idempotency key, shared with the contract's
-  /// consumedOrders mapping.
-  orderHash String @unique
-  signature String
+  /// Trigger threshold in USD, e.g. "3500".
+  triggerPrice Decimal @db.Decimal(38, 18)
 
-  // ---- off-chain trigger (the contract knows nothing about this) ----
-  pricePair    String      @default("ETH/USD")
-  triggerType  TriggerType
-  triggerPrice Decimal     @db.Decimal(36, 18)
+  status OrderStatus @default(PENDING)
 
-  // ---- lifecycle ----
-  status  OrderStatus @default(PENDING)
-  /// Optimistic lock. The atomic claim is:
-  ///   UPDATE orders SET status='EXECUTING', version=version+1
-  ///   WHERE id=$1 AND status='TRIGGERED' AND version=$2
-  /// Zero rows updated means another worker won the race.
-  version Int         @default(0)
+  /// bytes32 passed to the contract. Derived deterministically from the order
+  /// id at creation, so a retry of the same order can never execute twice:
+  /// the contract rejects a repeated executionId regardless of what the
+  /// backend believes.
+  executionId String @unique
 
-  triggeredAt          DateTime?
-  /// Price observed when the trigger fired, kept for post-hoc audit.
-  triggerPriceObserved Decimal?  @db.Decimal(36, 18)
-  executedAt           DateTime?
-  failureReason        String?
-  attemptCount         Int       @default(0)
+  txHash       String? @unique
+  errorMessage String?
 
-  attempts  ExecutionAttempt[]
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
-
-  /// Drives the trigger evaluator's hot query.
-  @@index([status, triggerType, triggerPrice])
-  @@index([userId, status])
-  /// A user can never reuse an on-chain nonce.
-  @@unique([userId, onchainNonce])
-  @@map("orders")
-}
-
-model ExecutionAttempt {
-  id      String @id @default(uuid())
-  orderId String
-  order   Order  @relation(fields: [orderId], references: [id])
-
-  attemptNumber Int
-
-  quotedAmountOut Decimal  @db.Decimal(78, 0)
-  runtimeMinOut   Decimal  @db.Decimal(78, 0)
-  poolFee         Int
-  deadline        DateTime
-
-  /// Executor EOA nonce, allocated under the Redis mutex.
-  nonce             Int
-  /// Persisted BEFORE broadcast. A sent transaction can never go unrecorded.
-  txHash            String?   @unique
-  txStatus          TxStatus?
-  blockNumber       BigInt?
-  gasUsed           BigInt?
-  effectiveGasPrice BigInt?
-  /// Read from the OrderExecuted event, not from the quote.
-  actualAmountOut   Decimal?  @db.Decimal(78, 0)
-  /// Decoded custom error name, e.g. "OrderAlreadyConsumed".
-  revertReason      String?
-  failureClass      String?
+  /// Optimistic-lock version. The claim that moves an order into EXECUTING is a
+  /// single conditional UPDATE on (status, version), so two concurrent workers
+  /// cannot both claim the same order.
+  version Int @default(0)
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([orderId, attemptNumber])
-  @@index([txStatus])
-  @@map("execution_attempts")
-}
-
-model PriceTick {
-  id      BigInt  @id @default(autoincrement())
-  pair    String
-  price   Decimal @db.Decimal(36, 18)
-  source  String
-  roundId BigInt?
-
-  /// Oracle-reported update time, not our poll time.
-  updatedAt DateTime
-  /// Failed a staleness / round-completeness / divergence check.
-  /// Suspect ticks are stored for audit but never fire a trigger.
-  suspect       Boolean  @default(false)
-  suspectReason String?
-  observedAt    DateTime @default(now())
-
-  @@index([pair, observedAt])
-  @@map("price_ticks")
-}
-
-/// Every repair the reconciler makes is logged. Silent self-healing destroys
-/// the ability to debug an execution engine.
-model ReconciliationLog {
-  id          String   @id @default(uuid())
-  orderId     String?
-  kind        String
-  discrepancy String
-  resolution  String
-  createdAt   DateTime @default(now())
-
-  @@index([orderId])
-  @@map("reconciliation_logs")
-}
-
-/// Last block scanned for OrderExecuted logs, with a reorg buffer.
-model IndexerCheckpoint {
-  id                 String   @id @default("default")
-  lastProcessedBlock BigInt
-  updatedAt          DateTime @updatedAt
-
-  @@map("indexer_checkpoints")
+  /// Serves the price-watcher's future hot query: find PENDING orders whose
+  /// trigger the latest price satisfies.
+  @@index([status, triggerPrice])
+  @@index([userAddress, status])
+  @@index([status, createdAt])
+  @@map("orders")
 }

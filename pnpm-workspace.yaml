@@ -1,4 +1,7 @@
+# `contracts` is deliberately excluded: it is a self-contained Hardhat project
+# with its own npm-managed dependency tree, already installed and working.
+# Folding it into the pnpm workspace would re-resolve its peer graph and risk
+# breaking a toolchain that currently compiles and tests cleanly.
 packages:
   - 'apps/*'
   - 'packages/*'
-  - 'contracts'

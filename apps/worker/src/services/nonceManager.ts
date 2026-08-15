@@ -1,14 +1,8 @@
 /**
- * Serialized nonce allocation for the executor EOA, behind a Redis mutex.
+ * Serialized nonce allocation for the executor EOA — NOT YET IMPLEMENTED.
  *
- * Nonces are allocated strictly in order. A gap or a stuck transaction blocks
- * the queue by design: with one signer, proceeding past a stuck nonce cannot
- * work, and pretending otherwise produces a pile of transactions that can never
- * mine.
- *
- * Resyncs from getTransactionCount('pending') on startup and after any
- * nonce-related RPC error.
+ * Nonces are allocated strictly in order behind a Redis mutex. A gap or a stuck
+ * transaction blocks the queue by design: with one signer, proceeding past a
+ * stuck nonce cannot work.
  */
-
-// TODO(impl)
 export {};
