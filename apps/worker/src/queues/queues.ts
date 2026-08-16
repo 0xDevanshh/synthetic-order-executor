@@ -75,7 +75,9 @@ export class BullMonitorPipeline {
       'check',
       { orderId },
       {
-        jobId: `${orderId}:initial`,
+        // NOTE: BullMQ rejects a jobId containing ':'. Use '--' as the
+        // separator; order ids are UUIDs, so single hyphens are not distinctive.
+        jobId: `monitor--${orderId}--initial`,
         delay: 5_000,
         removeOnComplete: { count: 500 },
         removeOnFail: { count: 500 },

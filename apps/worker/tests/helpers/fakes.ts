@@ -71,6 +71,11 @@ export class FakeOrderRepository {
   /** Force the next N transitions to lose their race, simulating a competitor. */
   stealNext = 0;
 
+  /** Failure injection, for exercising database faults around submission. */
+  failRecordTxHash: Error | undefined;
+  failMarkConfirmed: Error | undefined;
+  failTransition: Error | undefined;
+
   add(...orders: Order[]): void {
     for (const o of orders) this.orders.set(o.id, o);
   }
@@ -88,6 +93,7 @@ export class FakeOrderRepository {
   }
 
   async recordTxHash(id: string, txHash: string): Promise<Order | null> {
+    if (this.failRecordTxHash) throw this.failRecordTxHash;
     const order = this.orders.get(id);
     if (!order || order.status !== 'EXECUTING') return null;
     const updated: Order = { ...order, txHash, submittedAt: new Date(), updatedAt: new Date() };
@@ -102,6 +108,7 @@ export class FakeOrderRepository {
     gasUsed: bigint;
     amountOut?: bigint;
   }): Promise<Order | null> {
+    if (this.failMarkConfirmed) throw this.failMarkConfirmed;
     const order = this.orders.get(params.id);
     if (!order || order.status !== 'EXECUTING') return null;
     const updated: Order = {
@@ -165,6 +172,7 @@ export class FakeOrderRepository {
     txHash?: string | null;
     errorMessage?: string | null;
   }): Promise<Order | null> {
+    if (this.failTransition) throw this.failTransition;
     if (this.stealNext > 0) {
       this.stealNext -= 1;
       const victim = this.orders.get(params.id);

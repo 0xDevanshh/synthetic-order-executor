@@ -50,7 +50,8 @@ export function createTxMonitorWorker(
             // A distinct jobId per attempt: BullMQ refuses a duplicate id while
             // the original is active, so reusing it would silently drop the
             // re-check and strand the order in EXECUTING.
-            jobId: `${result.orderId}:${Date.now()}`,
+            // BullMQ also rejects ':' in a jobId, hence the '--' separator.
+            jobId: `monitor--${result.orderId}--${Date.now()}`,
             delay: recheckDelayMs,
             removeOnComplete: { count: 500 },
             removeOnFail: { count: 500 },
@@ -85,7 +86,7 @@ export async function enqueueMonitor(
     'check',
     { orderId },
     {
-      jobId: `${orderId}:initial`,
+      jobId: `monitor--${orderId}--initial`,
       delay: delayMs,
       removeOnComplete: { count: 500 },
       removeOnFail: { count: 500 },

@@ -47,6 +47,8 @@ export class FakeExecutorClient {
   landsDespiteThrow = false;
 
   submitted: ExecutionParams[] = [];
+  /** Counts transactions that actually reached the network. */
+  broadcastCount = 0;
   txHash: Hex = `0x${'ab'.repeat(32)}`;
 
   /** Reconciliation surface. */
@@ -98,8 +100,11 @@ export class FakeExecutorClient {
   ): Promise<Hex> {
     this.submitted.push(params);
 
-    // Faithful to the real client: the hash is handed over BEFORE broadcast.
+    // Faithful to the real client: the hash is handed over BEFORE broadcast,
+    // and a throwing callback aborts before anything reaches the network.
     if (onSigned) await onSigned(this.txHash);
+
+    this.broadcastCount += 1;
 
     if (this.throwOnExecute) {
       if (this.landsDespiteThrow) this.executed.add(params.executionId.toLowerCase());

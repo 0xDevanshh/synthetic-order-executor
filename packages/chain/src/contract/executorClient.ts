@@ -241,7 +241,14 @@ export class ExecutorContractClient {
       chain: null,
     });
 
-    const serialized = await client.signTransaction(request as never);
+    // Sign with the local account rather than through the wallet client. The
+    // wallet client round-trips eth_chainId first, which is a needless RPC call
+    // in the hot path — and a needless failure mode, since the chain id is
+    // already fixed by configuration and asserted at boot.
+    const serialized = account.signTransaction
+      ? await account.signTransaction(request as never)
+      : await client.signTransaction(request as never);
+
     const txHash = keccak256(serialized);
 
     // Persist BEFORE broadcasting. See the note above.
