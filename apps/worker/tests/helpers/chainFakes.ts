@@ -1,11 +1,12 @@
 import { getAddress, parseUnits, type Address, type Hex } from 'viem';
 import type {
+  TransactionMonitor,
+  TransactionOutcome,
   BuildParamsInput,
   ChainConfig,
   DexAdapter,
   DexQuote,
   ExecutionParams,
-  ExecutionReceipt,
   ExecutorContractClient,
   QuoteRequest,
 } from '@soe/chain';
@@ -38,8 +39,7 @@ export class FakeExecutorClient {
   executorAddress: Address | undefined = EXECUTOR_EOA;
   hasSigner = true;
 
-  /** Set to make execute() report a reverted transaction. */
-  revert = false;
+
   /** Set to make execute() throw, as an RPC failure would. */
   throwOnExecute: Error | undefined;
   /** Marks the id consumed on-chain when execute throws, simulating a landed tx. */
@@ -73,14 +73,14 @@ export class FakeExecutorClient {
     return parseUnits('34.9', 6);
   }
 
-  async execute(
+  async submit(
     params: ExecutionParams,
-    onSubmitted?: (txHash: Hex) => Promise<void>,
-  ): Promise<ExecutionReceipt> {
+    onSigned?: (txHash: Hex) => Promise<void>,
+  ): Promise<Hex> {
     this.submitted.push(params);
 
     // Faithful to the real client: the hash is handed over BEFORE broadcast.
-    if (onSubmitted) await onSubmitted(this.txHash);
+    if (onSigned) await onSigned(this.txHash);
 
     if (this.throwOnExecute) {
       if (this.landsDespiteThrow) this.executed.add(params.executionId.toLowerCase());
@@ -88,15 +88,7 @@ export class FakeExecutorClient {
     }
 
     this.executed.add(params.executionId.toLowerCase());
-
-    return {
-      txHash: this.txHash,
-      blockNumber: 11_500_000n,
-      gasUsed: 210_000n,
-      success: !this.revert,
-      amountOut: this.revert ? undefined : parseUnits('34.9', 6),
-      revertReason: this.revert ? 'SlippageExceeded' : undefined,
-    };
+    return this.txHash;
   }
 }
 
@@ -141,14 +133,43 @@ export class FakeDexAdapter implements DexAdapter {
     return params;
   }
 
-  async execute(
-    params: ExecutionParams,
-    onSubmitted?: (txHash: Hex) => Promise<void>,
-  ): Promise<ExecutionReceipt> {
-    return this.executor.execute(params, onSubmitted);
+  async submit(params: ExecutionParams, onSigned?: (txHash: Hex) => Promise<void>): Promise<Hex> {
+    return this.executor.submit(params, onSigned);
   }
 }
 
 export function asExecutorClient(fake: FakeExecutorClient): ExecutorContractClient {
   return fake as unknown as ExecutorContractClient;
+}
+
+/** Monitor stand-in: tests set the outcome and assert what the service does. */
+export class FakeTransactionMonitor {
+  outcome: TransactionOutcome = {
+    kind: 'SUCCESS',
+    txHash: `0x${'ab'.repeat(32)}` as Hex,
+    blockNumber: 11_500_000n,
+    gasUsed: 210_000n,
+    amountOut: parseUnits('34.9', 6),
+  };
+
+  calls: { txHash: Hex; executionId: Hex }[] = [];
+
+  async getOutcome(txHash: Hex, executionId: Hex): Promise<TransactionOutcome> {
+    this.calls.push({ txHash, executionId });
+    return this.outcome;
+  }
+}
+
+export class FakeMonitorPipeline {
+  enqueued: string[] = [];
+  error: Error | undefined;
+
+  async enqueue(orderId: string): Promise<void> {
+    if (this.error) throw this.error;
+    this.enqueued.push(orderId);
+  }
+}
+
+export function asMonitor(fake: FakeTransactionMonitor): TransactionMonitor {
+  return fake as unknown as TransactionMonitor;
 }

@@ -107,11 +107,96 @@ export class OrderRepository {
   async recordTxHash(id: string, txHash: string): Promise<Order | null> {
     const result = await this.db.order.updateMany({
       where: { id, status: 'EXECUTING' },
-      data: { txHash },
+      data: { txHash, submittedAt: new Date() },
     });
 
     if (result.count === 0) return null;
     return this.findById(id);
+  }
+
+  /**
+   * EXECUTING -> EXECUTED, with the settled on-chain facts.
+   *
+   * `amountOut` comes from the SwapExecuted event, never from the quote or the
+   * simulation. Recording a prediction as if it were settled is how a book
+   * drifts from chain state.
+   */
+  async markConfirmed(params: {
+    id: string;
+    txHash: string;
+    blockNumber: bigint;
+    gasUsed: bigint;
+    amountOut?: bigint;
+  }): Promise<Order | null> {
+    const result = await this.db.order.updateMany({
+      where: { id: params.id, status: 'EXECUTING' },
+      data: {
+        status: 'EXECUTED',
+        txHash: params.txHash,
+        blockNumber: params.blockNumber,
+        gasUsed: params.gasUsed,
+        ...(params.amountOut !== undefined
+          ? { amountOut: new Prisma.Decimal(params.amountOut.toString()) }
+          : {}),
+        confirmedAt: new Date(),
+        errorMessage: null,
+        version: { increment: 1 },
+      },
+    });
+
+    if (result.count === 0) return null;
+    return this.findById(params.id);
+  }
+
+  /** EXECUTING -> FAILED, preserving the hash and the decoded reason. */
+  async markFailed(params: {
+    id: string;
+    errorMessage: string;
+    txHash?: string;
+    blockNumber?: bigint;
+    gasUsed?: bigint;
+  }): Promise<Order | null> {
+    const result = await this.db.order.updateMany({
+      where: { id: params.id, status: 'EXECUTING' },
+      data: {
+        status: 'FAILED',
+        errorMessage: params.errorMessage.slice(0, 500),
+        ...(params.txHash ? { txHash: params.txHash } : {}),
+        ...(params.blockNumber !== undefined ? { blockNumber: params.blockNumber } : {}),
+        ...(params.gasUsed !== undefined ? { gasUsed: params.gasUsed } : {}),
+        confirmedAt: new Date(),
+        version: { increment: 1 },
+      },
+    });
+
+    if (result.count === 0) return null;
+    return this.findById(params.id);
+  }
+
+  /** Count a monitor poll. Reads are always safe; this is for observability. */
+  async incrementMonitorAttempts(id: string): Promise<void> {
+    await this.db.order.updateMany({
+      where: { id },
+      data: { monitorAttempts: { increment: 1 } },
+    });
+  }
+
+  /**
+   * Orders stuck in EXECUTING longer than `olderThanMs`.
+   *
+   * The safety net for a monitor job that was lost — a worker crash, a Redis
+   * flush, a deploy mid-flight. Without this sweep an order could sit in
+   * EXECUTING forever with a settled transaction nobody looked at.
+   */
+  async findStuckExecuting(olderThanMs: number, limit = 50): Promise<Order[]> {
+    return this.db.order.findMany({
+      where: {
+        status: 'EXECUTING',
+        submittedAt: { lt: new Date(Date.now() - olderThanMs) },
+      },
+      orderBy: { submittedAt: 'asc' },
+      take: limit,
+    });
   }
 
   /**

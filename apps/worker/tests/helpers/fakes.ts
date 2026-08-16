@@ -23,6 +23,12 @@ export function makeOrder(overrides: Partial<Order> = {}): Order {
     txHash: null,
     errorMessage: null,
     version: 0,
+    submittedAt: null,
+    confirmedAt: null,
+    blockNumber: null,
+    gasUsed: null,
+    amountOut: null,
+    monitorAttempts: 0,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -84,9 +90,71 @@ export class FakeOrderRepository {
   async recordTxHash(id: string, txHash: string): Promise<Order | null> {
     const order = this.orders.get(id);
     if (!order || order.status !== 'EXECUTING') return null;
-    const updated: Order = { ...order, txHash, updatedAt: new Date() };
+    const updated: Order = { ...order, txHash, submittedAt: new Date(), updatedAt: new Date() };
     this.orders.set(id, updated);
     return updated;
+  }
+
+  async markConfirmed(params: {
+    id: string;
+    txHash: string;
+    blockNumber: bigint;
+    gasUsed: bigint;
+    amountOut?: bigint;
+  }): Promise<Order | null> {
+    const order = this.orders.get(params.id);
+    if (!order || order.status !== 'EXECUTING') return null;
+    const updated: Order = {
+      ...order,
+      status: 'EXECUTED',
+      txHash: params.txHash,
+      blockNumber: params.blockNumber,
+      gasUsed: params.gasUsed,
+      amountOut:
+        params.amountOut !== undefined ? new Prisma.Decimal(params.amountOut.toString()) : null,
+      confirmedAt: new Date(),
+      errorMessage: null,
+      version: order.version + 1,
+      updatedAt: new Date(),
+    };
+    this.orders.set(params.id, updated);
+    return updated;
+  }
+
+  async markFailed(params: {
+    id: string;
+    errorMessage: string;
+    txHash?: string;
+    blockNumber?: bigint;
+    gasUsed?: bigint;
+  }): Promise<Order | null> {
+    const order = this.orders.get(params.id);
+    if (!order || order.status !== 'EXECUTING') return null;
+    const updated: Order = {
+      ...order,
+      status: 'FAILED',
+      errorMessage: params.errorMessage.slice(0, 500),
+      ...(params.txHash ? { txHash: params.txHash } : {}),
+      ...(params.blockNumber !== undefined ? { blockNumber: params.blockNumber } : {}),
+      ...(params.gasUsed !== undefined ? { gasUsed: params.gasUsed } : {}),
+      confirmedAt: new Date(),
+      version: order.version + 1,
+      updatedAt: new Date(),
+    };
+    this.orders.set(params.id, updated);
+    return updated;
+  }
+
+  async incrementMonitorAttempts(id: string): Promise<void> {
+    const order = this.orders.get(id);
+    if (order) this.orders.set(id, { ...order, monitorAttempts: order.monitorAttempts + 1 });
+  }
+
+  async findStuckExecuting(olderThanMs: number, limit = 50): Promise<Order[]> {
+    const cutoff = Date.now() - olderThanMs;
+    return [...this.orders.values()]
+      .filter((o) => o.status === 'EXECUTING' && o.submittedAt !== null && o.submittedAt.getTime() < cutoff)
+      .slice(0, limit);
   }
 
   async transitionStatus(params: {

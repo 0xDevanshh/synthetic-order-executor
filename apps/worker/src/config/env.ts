@@ -24,6 +24,14 @@ const envSchema = z.object({
   MAX_PRICE_STALENESS_SEC: z.coerce.number().int().positive().default(3_600),
   MAX_PRICE_DIVERGENCE_BPS: z.coerce.number().int().positive().default(200),
   TRIGGER_BATCH_SIZE: z.coerce.number().int().positive().max(1_000).default(100),
+
+  /** Gap between monitor re-checks of a still-pending transaction. */
+  TX_RECHECK_DELAY_MS: z.coerce.number().int().min(1_000).default(15_000),
+  /** How long a tx may be invisible before we consult the contract about it. */
+  PENDING_GRACE_MS: z.coerce.number().int().min(10_000).default(180_000),
+  /** An EXECUTING order older than this is swept. */
+  TX_STUCK_AFTER_MS: z.coerce.number().int().min(30_000).default(300_000),
+  TX_SWEEP_INTERVAL_MS: z.coerce.number().int().min(10_000).default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

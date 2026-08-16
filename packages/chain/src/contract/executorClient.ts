@@ -1,5 +1,4 @@
 import {
-  decodeEventLog,
   encodeFunctionData,
   keccak256,
   parseGwei,
@@ -13,11 +12,7 @@ import {
 import { syntheticOrderExecutorAbi } from '../abi/syntheticOrderExecutor.js';
 import { createReadClient, createSigningClient } from '../clients.js';
 import type { ChainConfig } from '../config.js';
-import {
-  NoSignerError,
-  type ExecutionParams,
-  type ExecutionReceipt,
-} from '../dex/DexAdapter.js';
+import { NoSignerError, type ExecutionParams } from '../dex/DexAdapter.js';
 
 export interface ExecutorContractState {
   paused: boolean;
@@ -154,27 +149,30 @@ export class ExecutorContractClient {
   // -------------------------------------------------------------------------
 
   /**
-   * Submit an execution.
+   * Sign and broadcast an execution. Returns as soon as the transaction is on
+   * the network — it does NOT wait for a receipt.
    *
-   * The ordering below is the single most important detail in the whole
-   * execution path:
+   * Waiting is the monitor's job. Blocking here would tie up the executor
+   * worker (and its single nonce sequence) for minutes per order, and would
+   * lose the transaction entirely if the process restarted mid-wait.
    *
-   *   1. Simulate — catch reverts before spending anything.
-   *   2. Sign LOCALLY. A signed raw transaction has a deterministic hash, known
-   *      before anyone else has seen it.
-   *   3. Call `onSubmitted(hash)` — the caller persists EXECUTING + txHash HERE.
+   * The ordering below is the most important detail in the execution path:
+   *
+   *   1. Simulate      — catch reverts before spending anything.
+   *   2. Sign LOCALLY  — a signed raw transaction has a deterministic hash,
+   *                      known before anyone else has seen it.
+   *   3. onSigned(hash) — the caller persists EXECUTING + txHash HERE.
    *   4. Only then broadcast.
    *
-   * Doing 4 before 3 creates a window where a transaction exists on the network
-   * that the database has no record of. If the process dies in that window, the
-   * order looks unexecuted forever while the swap actually settles, and
-   * reconciliation has no hash to search for. Signing locally is what makes the
-   * safe ordering possible at all.
+   * Doing 4 before 3 leaves a window where a transaction exists on the network
+   * that the database has no record of. Die in that window and the order looks
+   * unexecuted forever while the swap settles, with no hash to reconcile
+   * against. Local signing is what makes the safe ordering possible.
    */
-  async execute(
+  async submit(
     params: ExecutionParams,
-    onSubmitted?: (txHash: Hex) => Promise<void>,
-  ): Promise<ExecutionReceipt> {
+    onSigned?: (txHash: Hex) => Promise<void>,
+  ): Promise<Hex> {
     if (!this.signer) throw new NoSignerError();
 
     const { client, account } = this.signer;
@@ -188,7 +186,7 @@ export class ExecutorContractClient {
       account,
       to: this.address,
       data: this.encodeExecuteSwap(params),
-      // Cap the fee. An RPC returning a wild estimate during congestion should
+      // Cap the fee. An RPC returning a wild estimate during congestion must
       // not be able to drain the hot wallet's gas budget on one transaction.
       maxFeePerGas: fees.maxFeePerGas > maxFeeCap ? maxFeeCap : fees.maxFeePerGas,
       maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
@@ -199,25 +197,9 @@ export class ExecutorContractClient {
     const txHash = keccak256(serialized);
 
     // Persist BEFORE broadcasting. See the note above.
-    if (onSubmitted) await onSubmitted(txHash);
+    if (onSigned) await onSigned(txHash);
 
-    const broadcastHash = await this.read.sendRawTransaction({
-      serializedTransaction: serialized,
-    });
-
-    const receipt = await this.read.waitForTransactionReceipt({
-      hash: broadcastHash,
-      timeout: 300_000,
-    });
-
-    return {
-      txHash: broadcastHash,
-      blockNumber: receipt.blockNumber,
-      gasUsed: receipt.gasUsed,
-      success: receipt.status === 'success',
-      amountOut:
-        receipt.status === 'success' ? this.decodeAmountOut(receipt.logs) : undefined,
-    };
+    return this.read.sendRawTransaction({ serializedTransaction: serialized });
   }
 
   private encodeExecuteSwap(params: ExecutionParams): Hex {
@@ -237,31 +219,4 @@ export class ExecutorContractClient {
     });
   }
 
-  /**
-   * Read the ACTUAL output from the SwapExecuted event.
-   *
-   * Not the quote, and not the simulation — the amount the swap really produced.
-   * Recording a predicted number as if it were settled is how books drift from
-   * chain state.
-   */
-  private decodeAmountOut(logs: readonly { address: string; data: Hex; topics: readonly Hex[] }[]):
-    | bigint
-    | undefined {
-    for (const log of logs) {
-      if (log.address.toLowerCase() !== this.address.toLowerCase()) continue;
-      try {
-        const decoded = decodeEventLog({
-          abi: syntheticOrderExecutorAbi,
-          data: log.data,
-          topics: log.topics as [Hex, ...Hex[]],
-        });
-        if (decoded.eventName === 'SwapExecuted') {
-          return (decoded.args as unknown as { amountOut: bigint }).amountOut;
-        }
-      } catch {
-        // Not one of ours, or an unrelated event. Skip.
-      }
-    }
-    return undefined;
-  }
 }

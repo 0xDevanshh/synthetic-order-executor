@@ -11,7 +11,6 @@ import {
   type DexAdapter,
   type DexQuote,
   type ExecutionParams,
-  type ExecutionReceipt,
   type QuoteRequest,
 } from './DexAdapter.js';
 
@@ -164,12 +163,12 @@ export class UniswapAdapter implements DexAdapter {
     };
   }
 
-  /** Submit through SyntheticOrderExecutor. */
-  async execute(
-    params: ExecutionParams,
-    onSubmitted?: (txHash: Hex) => Promise<void>,
-  ): Promise<ExecutionReceipt> {
-    return this.executor.execute(params, onSubmitted);
+  /**
+   * Submit through SyntheticOrderExecutor — never straight to the router. That
+   * is what keeps the on-chain restrictions unbypassable.
+   */
+  async submit(params: ExecutionParams, onSigned?: (txHash: Hex) => Promise<void>): Promise<Hex> {
+    return this.executor.submit(params, onSigned);
   }
 
   /** Convenience for diagnostics and the Sepolia verification script. */

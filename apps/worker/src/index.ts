@@ -3,6 +3,7 @@ import { prisma } from '@soe/database';
 import { OrderRepository } from '@soe/core';
 import {
   ExecutorContractClient,
+  TransactionMonitor,
   UniswapAdapter,
   assertChain,
   createReadClient,
@@ -13,14 +14,18 @@ import { loadEnv } from './config/env.js';
 import { buildPriceService } from './price/factory.js';
 import { TriggerEngine } from './trigger/triggerEngine.js';
 import { ExecutionService, createTokenRegistry } from './execution/execution.service.js';
+import { TxMonitorService } from './monitor/txMonitor.service.js';
 import {
   BullExecutionPipeline,
+  BullMonitorPipeline,
   createExecuteOrderQueue,
   createPriceWatcherQueue,
+  createTxMonitorQueue,
   createRedisConnection,
 } from './queues/queues.js';
 import { createPriceWatcherWorker, schedulePriceWatcher } from './workers/priceWatcher.worker.js';
 import { createExecutorWorker } from './workers/executor.worker.js';
+import { createTxMonitorWorker, scheduleSweep } from './workers/txMonitor.worker.js';
 import { logger } from './lib/logger.js';
 
 /**
@@ -60,6 +65,7 @@ async function main(): Promise<void> {
 
   const executeQueue = createExecuteOrderQueue(connection);
   const priceQueue = createPriceWatcherQueue(connection);
+  const monitorQueue = createTxMonitorQueue(connection);
 
   const triggerEngine = new TriggerEngine(
     buildPriceService(env),
@@ -74,12 +80,25 @@ async function main(): Promise<void> {
     dex,
     executor,
     createTokenRegistry(chain),
+    new BullMonitorPipeline(monitorQueue),
+    logger,
+  );
+
+  const txMonitorService = new TxMonitorService(
+    repository,
+    new TransactionMonitor(readClient, executor, { pendingGraceMs: env.PENDING_GRACE_MS }),
     logger,
   );
 
   const priceWorker = createPriceWatcherWorker(connection, triggerEngine);
   const executorWorker = createExecutorWorker(connection, executionService);
+  const monitorWorker = createTxMonitorWorker(connection, txMonitorService, monitorQueue, {
+    recheckDelayMs: env.TX_RECHECK_DELAY_MS,
+    stuckAfterMs: env.TX_STUCK_AFTER_MS,
+  });
+
   await schedulePriceWatcher(priceQueue, env.PRICE_POLL_INTERVAL_MS);
+  await scheduleSweep(monitorQueue, env.TX_SWEEP_INTERVAL_MS);
 
   logger.info(
     {
@@ -90,15 +109,15 @@ async function main(): Promise<void> {
       slippageBps: chain.slippageBps,
       deadlineWindowSec: chain.deadlineWindowSec,
     },
-    'worker started: price watcher + executor',
+    'worker started: price watcher + executor + tx monitor',
   );
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutting down');
     // Let an in-flight execution finish. Killing a worker between signing and
     // broadcasting is the one thing that creates genuinely ambiguous state.
-    await Promise.all([priceWorker.close(), executorWorker.close()]);
-    await Promise.all([executeQueue.close(), priceQueue.close()]);
+    await Promise.all([priceWorker.close(), executorWorker.close(), monitorWorker.close()]);
+    await Promise.all([executeQueue.close(), priceQueue.close(), monitorQueue.close()]);
     await connection.quit();
     await prisma.$disconnect();
     process.exit(0);

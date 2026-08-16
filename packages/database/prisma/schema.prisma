@@ -60,6 +60,22 @@ model Order {
   txHash       String? @unique
   errorMessage String?
 
+  /// When the signed transaction was recorded, immediately BEFORE broadcast.
+  /// Its presence means "a transaction may exist on-chain for this order" — the
+  /// monitor treats that as the point of no return for blind retries.
+  submittedAt DateTime?
+  /// When a receipt was observed and the order reached a terminal state.
+  confirmedAt DateTime?
+
+  blockNumber BigInt?
+  gasUsed     BigInt?
+  /// Actual output, decoded from the SwapExecuted event. Not the quote.
+  amountOut   Decimal? @db.Decimal(78, 0)
+
+  /// How many times the MONITOR has polled. Distinct from execution attempts:
+  /// polling is a read and always safe, resubmitting is not.
+  monitorAttempts Int @default(0)
+
   /// Optimistic-lock version. The claim that moves an order into EXECUTING is a
   /// single conditional UPDATE on (status, version), so two concurrent workers
   /// cannot both claim the same order.
@@ -73,5 +89,7 @@ model Order {
   @@index([status, triggerPrice])
   @@index([userAddress, status])
   @@index([status, createdAt])
+  /// Serves the monitor's sweep for orders stuck in EXECUTING.
+  @@index([status, submittedAt])
   @@map("orders")
 }

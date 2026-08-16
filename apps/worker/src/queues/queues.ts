@@ -50,3 +50,32 @@ export function createExecuteOrderQueue(connection: IORedis): Queue {
 export function createPriceWatcherQueue(connection: IORedis): Queue {
   return new Queue(QUEUE.PRICE_WATCHER, { connection });
 }
+
+export function createTxMonitorQueue(connection: IORedis): Queue {
+  return new Queue(QUEUE.TX_MONITOR, { connection });
+}
+
+/**
+ * Handoff from the executor to the transaction monitor.
+ *
+ * Distinct from BullExecutionPipeline on purpose. Enqueueing a MONITOR job is
+ * always safe — it only causes reads. Enqueueing an EXECUTION job may cause a
+ * transaction. Keeping them as separate types makes it hard to confuse the two
+ * at a call site.
+ */
+export class BullMonitorPipeline {
+  constructor(private readonly queue: Queue) {}
+
+  async enqueue(orderId: string): Promise<void> {
+    await this.queue.add(
+      'check',
+      { orderId },
+      {
+        jobId: `${orderId}:initial`,
+        delay: 5_000,
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 500 },
+      },
+    );
+  }
+}

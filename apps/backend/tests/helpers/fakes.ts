@@ -92,6 +92,12 @@ export class FakeOrderRepository {
       txHash: null,
       errorMessage: null,
       version: 0,
+      submittedAt: null,
+      confirmedAt: null,
+      blockNumber: null,
+      gasUsed: null,
+      amountOut: null,
+      monitorAttempts: 0,
       createdAt: now,
       updatedAt: now,
     };

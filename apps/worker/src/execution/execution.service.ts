@@ -17,10 +17,20 @@ export class ExecutionRejected extends Error {
 
 export interface ExecutionOutcome {
   orderId: string;
-  status: 'EXECUTED' | 'FAILED' | 'SKIPPED';
+  /**
+   * SUBMITTED, not EXECUTED. This service's job ends when the transaction is on
+   * the network; only the monitor may declare an order EXECUTED, and only from
+   * a receipt.
+   */
+  status: 'SUBMITTED' | 'EXECUTED' | 'FAILED' | 'SKIPPED';
   txHash?: Hex;
   amountOut?: bigint;
   reason?: string;
+}
+
+/** Handoff to the transaction monitor. */
+export interface MonitorPipeline {
+  enqueue(orderId: string): Promise<void>;
 }
 
 /** Symbol -> address/decimals. Mirrors the API's registry. */
@@ -56,6 +66,7 @@ export class ExecutionService {
     private readonly dex: DexAdapter,
     private readonly executor: ExecutorContractClient,
     private readonly tokens: TokenRegistry,
+    private readonly monitorPipeline: MonitorPipeline,
     private readonly logger: Logger,
   ) {}
 
@@ -69,7 +80,7 @@ export class ExecutionService {
    *   4. Derive minAmountOut            — quote minus slippage
    *   5. Claim TRIGGERED -> EXECUTING   — atomic; loser stands down
    *   6. Sign, persist txHash, broadcast
-   *   7. Resolve the receipt
+   *   7. Hand off to the monitor — this service never waits for a receipt
    *
    * Step 2 before step 5 is deliberate: checking the chain first avoids burning
    * a state transition on an order that already settled.
@@ -160,55 +171,33 @@ export class ExecutionService {
         return { orderId, status: 'SKIPPED', reason: 'claimed by another worker' };
       }
 
-      // 6. The hash is persisted by the callback BEFORE broadcast, so a
-      //    transaction can never exist that the database has no record of.
-      const receipt = await this.dex.execute(params, async (txHash) => {
-        await this.orders.recordTxHash(order.id, txHash);
-        this.logger.info({ orderId, txHash }, 'transaction signed and recorded pre-broadcast');
-      });
-
-      // 7. Resolve.
-      const current = await this.orders.findById(order.id);
-      if (!current) return { orderId, status: 'SKIPPED', reason: 'order vanished' };
-
-      if (receipt.success) {
-        await this.orders.transitionStatus({
-          id: order.id,
-          expectedStatus: 'EXECUTING',
-          expectedVersion: current.version,
-          nextStatus: 'EXECUTED',
-          txHash: receipt.txHash,
-          errorMessage: null,
-        });
-
+      // 6. Sign, persist the hash pre-broadcast, then broadcast. Returns as
+      //    soon as the transaction is on the network — waiting for a receipt is
+      //    the monitor's job, and blocking here would tie up the executor's
+      //    single nonce sequence for minutes per order.
+      const txHash = await this.dex.submit(params, async (signedHash) => {
+        await this.orders.recordTxHash(order.id, signedHash);
         this.logger.info(
           {
             orderId,
-            txHash: receipt.txHash,
-            amountOut: receipt.amountOut?.toString(),
-            gasUsed: receipt.gasUsed.toString(),
+            executionId,
+            txHash: signedHash,
+            status: 'EXECUTING',
+            error: null,
           },
-          'order EXECUTED',
+          'transaction signed and recorded pre-broadcast',
         );
-
-        return {
-          orderId,
-          status: 'EXECUTED',
-          txHash: receipt.txHash,
-          amountOut: receipt.amountOut,
-        };
-      }
-
-      await this.orders.transitionStatus({
-        id: order.id,
-        expectedStatus: 'EXECUTING',
-        expectedVersion: current.version,
-        nextStatus: 'FAILED',
-        txHash: receipt.txHash,
-        errorMessage: (receipt.revertReason ?? 'transaction reverted').slice(0, 500),
       });
 
-      return { orderId, status: 'FAILED', txHash: receipt.txHash, reason: 'reverted' };
+      this.logger.info(
+        { orderId, executionId, txHash, status: 'EXECUTING', error: null },
+        'transaction broadcast; handing off to monitor',
+      );
+
+      // 7. Hand off. The order stays EXECUTING until the monitor resolves it.
+      await this.monitorPipeline.enqueue(order.id);
+
+      return { orderId, status: 'SUBMITTED', txHash };
     } catch (error) {
       return this.handleFailure(order, error);
     }
@@ -225,24 +214,43 @@ export class ExecutionService {
   private async handleFailure(order: Order, error: unknown): Promise<ExecutionOutcome> {
     const reason = error instanceof Error ? error.message : String(error);
     const current = await this.orders.findById(order.id);
+    const base = { orderId: order.id, executionId: order.executionId };
+
     if (!current) return { orderId: order.id, status: 'SKIPPED', reason };
 
-    if (current.status === 'EXECUTING') {
-      if (await this.executor.isExecuted(order.executionId as Hex)) {
-        this.logger.warn(
-          { orderId: order.id, err: reason },
-          'error after submission but execution landed on-chain; marking EXECUTED',
+    // A transaction hash exists, so something may be on the network. This is
+    // exactly the ambiguity the monitor is built to resolve, and the ONE thing
+    // this method must never do is guess. The order stays EXECUTING and is
+    // handed to the monitor, which will consult the chain before concluding
+    // anything.
+    if (current.status === 'EXECUTING' && current.txHash) {
+      this.logger.warn(
+        { ...base, txHash: current.txHash, status: 'EXECUTING', error: reason },
+        'error after signing; transaction may be live — deferring to monitor',
+      );
+
+      try {
+        await this.monitorPipeline.enqueue(order.id);
+      } catch (enqueueError) {
+        // Even the handoff failed. The sweep over stuck EXECUTING orders is the
+        // backstop, which is precisely why that sweep exists.
+        this.logger.error(
+          {
+            ...base,
+            txHash: current.txHash,
+            status: 'EXECUTING',
+            error: String(enqueueError),
+          },
+          'could not enqueue monitor; order left for the stuck sweep',
         );
-        await this.orders.transitionStatus({
-          id: order.id,
-          expectedStatus: 'EXECUTING',
-          expectedVersion: current.version,
-          nextStatus: 'EXECUTED',
-        });
-        return { orderId: order.id, status: 'EXECUTED', reason: 'confirmed on-chain' };
       }
+
+      return { orderId: order.id, status: 'SUBMITTED', txHash: current.txHash as Hex, reason };
     }
 
+    // No hash was ever recorded, so nothing was signed and nothing can be on the
+    // network. Failing the order here is safe, and the order returns to a
+    // retryable state.
     await this.orders.transitionStatus({
       id: order.id,
       expectedStatus: current.status,
@@ -251,7 +259,11 @@ export class ExecutionService {
       errorMessage: reason.slice(0, 500),
     });
 
-    this.logger.error({ orderId: order.id, err: reason }, 'execution failed');
+    this.logger.error(
+      { ...base, txHash: null, status: 'FAILED', error: reason },
+      'execution failed before any transaction was signed',
+    );
+
     return { orderId: order.id, status: 'FAILED', reason };
   }
 }

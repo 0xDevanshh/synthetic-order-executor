@@ -11,6 +11,7 @@ import {
   asExecutorClient,
   FakeDexAdapter,
   FakeExecutorClient,
+  FakeMonitorPipeline,
   testChainConfig,
   WETH,
 } from './helpers/chainFakes.js';
@@ -19,6 +20,7 @@ describe('ExecutionService', () => {
   let repo: FakeOrderRepository;
   let executor: FakeExecutorClient;
   let dex: FakeDexAdapter;
+  let monitorPipeline: FakeMonitorPipeline;
   let service: ExecutionService;
 
   const USER = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as const;
@@ -27,11 +29,13 @@ describe('ExecutionService', () => {
     repo = new FakeOrderRepository();
     executor = new FakeExecutorClient();
     dex = new FakeDexAdapter(executor);
+    monitorPipeline = new FakeMonitorPipeline();
     service = new ExecutionService(
       asRepository(repo),
       dex,
       asExecutorClient(executor),
       createTokenRegistry(testChainConfig),
+      monitorPipeline,
       silentLogger,
     );
     // Fund the vault so balance pre-flight passes by default.
@@ -45,26 +49,37 @@ describe('ExecutionService', () => {
   };
 
   describe('happy path', () => {
-    it('executes a TRIGGERED order and records the tx hash', async () => {
+    it('submits a TRIGGERED order and leaves it EXECUTING for the monitor', async () => {
       const order = triggered();
       const outcome = await service.executeOrder(order.id);
 
-      expect(outcome.status).toBe('EXECUTED');
+      // SUBMITTED, not EXECUTED. Only a receipt may promote an order to
+      // EXECUTED, and only the monitor sees receipts.
+      expect(outcome.status).toBe('SUBMITTED');
       expect(outcome.txHash).toBe(executor.txHash);
 
       const stored = repo.orders.get(order.id);
-      expect(stored?.status).toBe('EXECUTED');
+      expect(stored?.status).toBe('EXECUTING');
       expect(stored?.txHash).toBe(executor.txHash);
+      expect(stored?.submittedAt).toBeInstanceOf(Date);
     });
 
-    it('records the ACTUAL amountOut, not the quoted one', async () => {
+    it('hands the order to the transaction monitor', async () => {
       const order = triggered();
-      dex.quotedAmountOut = parseUnits('35', 6);
+      await service.executeOrder(order.id);
 
+      expect(monitorPipeline.enqueued).toEqual([order.id]);
+    });
+
+    it('does not claim an amountOut at submission time', async () => {
+      // The settled figure comes from the SwapExecuted event, which does not
+      // exist yet. Reporting the quote here would be recording a prediction as
+      // if it were fact.
+      const order = triggered();
       const outcome = await service.executeOrder(order.id);
 
-      // Quote said 35; the swap produced 34.9. The settled figure is what counts.
-      expect(outcome.amountOut).toBe(parseUnits('34.9', 6));
+      expect(outcome.amountOut).toBeUndefined();
+      expect(repo.orders.get(order.id)?.amountOut).toBeNull();
     });
 
     it('passes the order executionId straight through to the contract', async () => {
@@ -188,10 +203,10 @@ describe('ExecutionService', () => {
       const order = triggered();
       const seen: (string | null)[] = [];
 
-      const originalExecute = executor.execute.bind(executor);
-      executor.execute = async (params, onSubmitted) => {
-        return originalExecute(params, async (hash) => {
-          await onSubmitted?.(hash);
+      const originalSubmit = executor.submit.bind(executor);
+      executor.submit = async (params, onSigned) => {
+        return originalSubmit(params, async (hash) => {
+          await onSigned?.(hash);
           seen.push(repo.orders.get(order.id)?.txHash ?? null);
         });
       };
@@ -203,41 +218,41 @@ describe('ExecutionService', () => {
   });
 
   describe('failure handling', () => {
-    it('marks FAILED with the revert reason when the transaction reverts', async () => {
+    it('leaves a reverted transaction to the monitor rather than judging it here', async () => {
+      // This service never sees a receipt, so it cannot know a transaction
+      // reverted. Resolving that is the monitor's job.
       const order = triggered();
-      executor.revert = true;
 
       const outcome = await service.executeOrder(order.id);
 
-      expect(outcome.status).toBe('FAILED');
-      // The decoded custom error, not a generic "reverted" — that specificity is
-      // what makes a failure classifiable as retryable or terminal later.
-      expect(repo.orders.get(order.id)?.errorMessage).toBe('SlippageExceeded');
-      expect(repo.orders.get(order.id)?.txHash).toBe(executor.txHash);
+      expect(outcome.status).toBe('SUBMITTED');
+      expect(repo.orders.get(order.id)?.status).toBe('EXECUTING');
+      expect(monitorPipeline.enqueued).toEqual([order.id]);
     });
 
-    it('marks EXECUTED when the call threw but the execution actually landed', async () => {
-      // An RPC timeout after broadcast does not mean the swap failed. Marking it
-      // FAILED here would be a lie, and would invite a duplicate retry.
+    it('leaves the order EXECUTING and defers to the monitor when the call throws after signing', async () => {
+      // An RPC error after signing says nothing about whether the transaction
+      // landed. Concluding FAILED here would be a guess, and a guess that
+      // invites a duplicate retry.
       const order = triggered();
       executor.throwOnExecute = new Error('socket hang up');
-      executor.landsDespiteThrow = true;
 
       const outcome = await service.executeOrder(order.id);
 
-      expect(outcome.status).toBe('EXECUTED');
-      expect(repo.orders.get(order.id)?.status).toBe('EXECUTED');
+      expect(outcome.status).toBe('SUBMITTED');
+      expect(repo.orders.get(order.id)?.status).toBe('EXECUTING');
+      expect(monitorPipeline.enqueued).toEqual([order.id]);
     });
 
-    it('marks FAILED when the call threw and nothing landed', async () => {
+    it('leaves the order EXECUTING for the sweep when even the monitor handoff fails', async () => {
       const order = triggered();
-      executor.throwOnExecute = new Error('nonce too low');
-      executor.landsDespiteThrow = false;
+      executor.throwOnExecute = new Error('socket hang up');
+      monitorPipeline.error = new Error('redis down');
 
       const outcome = await service.executeOrder(order.id);
 
-      expect(outcome.status).toBe('FAILED');
-      expect(repo.orders.get(order.id)?.status).toBe('FAILED');
+      expect(outcome.status).toBe('SUBMITTED');
+      expect(repo.orders.get(order.id)?.status).toBe('EXECUTING');
     });
 
     it('handles a missing order without throwing', async () => {

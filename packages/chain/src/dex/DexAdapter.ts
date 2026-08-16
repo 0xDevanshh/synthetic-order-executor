@@ -41,16 +41,6 @@ export interface BuildParamsInput {
   quote: DexQuote;
 }
 
-export interface ExecutionReceipt {
-  txHash: Hex;
-  blockNumber: bigint;
-  gasUsed: bigint;
-  /** Actual output, decoded from the SwapExecuted event — not the quote. */
-  amountOut?: bigint;
-  success: boolean;
-  revertReason?: string;
-}
-
 /**
  * The venue abstraction.
  *
@@ -80,14 +70,13 @@ export interface DexAdapter {
   buildExecutionParams(input: BuildParamsInput): ExecutionParams;
 
   /**
-   * Sign and submit. `onSubmitted` fires with the transaction hash BEFORE the
-   * transaction is broadcast — see the implementation for why that ordering is
-   * load-bearing.
+   * Sign and broadcast. Returns the transaction hash WITHOUT waiting for a
+   * receipt — resolving the outcome is the transaction monitor's job.
+   *
+   * `onSigned` fires with the hash BEFORE the transaction is broadcast; see the
+   * implementation for why that ordering is load-bearing.
    */
-  execute(
-    params: ExecutionParams,
-    onSubmitted?: (txHash: Hex) => Promise<void>,
-  ): Promise<ExecutionReceipt>;
+  submit(params: ExecutionParams, onSigned?: (txHash: Hex) => Promise<void>): Promise<Hex>;
 }
 
 export class NoLiquidityError extends Error {
