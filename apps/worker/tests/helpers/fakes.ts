@@ -1,7 +1,7 @@
 import { Prisma, type Order, type OrderSide, type OrderStatus } from '@soe/database';
 import type { OrderRepository } from '@soe/core';
 
-import type { PriceProvider, PriceQuote } from '../../src/price/PriceProvider.js';
+import type { PriceProvider, PriceQuote } from '@soe/chain';
 import type { ExecutionPipeline } from '../../src/trigger/triggerEngine.js';
 import type { Logger } from '../../src/lib/logger.js';
 

@@ -1,12 +1,15 @@
-/**
- * Root layout: wagmi + react-query providers, Tailwind globals.
- *
- * TODO(impl)
- */
+import type { Metadata } from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'Synthetic Order Executor',
+  description: 'Off-chain trigger detection, on-chain constrained execution on Ethereum Sepolia.',
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className="min-h-screen antialiased">{children}</body>
     </html>
   );
 }

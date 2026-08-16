@@ -5,13 +5,13 @@ import {
   ExecutorContractClient,
   TransactionMonitor,
   UniswapAdapter,
+  buildPriceService,
   assertChain,
   createReadClient,
   loadChainConfig,
 } from '@soe/chain';
 
 import { loadEnv } from './config/env.js';
-import { buildPriceService } from './price/factory.js';
 import { TriggerEngine } from './trigger/triggerEngine.js';
 import { ExecutionService, createTokenRegistry } from './execution/execution.service.js';
 import { TxMonitorService } from './monitor/txMonitor.service.js';
@@ -72,7 +72,15 @@ async function main(): Promise<void> {
   const reconcilerQueue = createReconcilerQueue(connection);
 
   const triggerEngine = new TriggerEngine(
-    buildPriceService(env),
+    buildPriceService({
+      provider: env.PRICE_PROVIDER,
+      crossCheck: env.PRICE_CROSSCHECK_PROVIDER,
+      staticPrice: env.STATIC_PRICE,
+      rpcUrl: env.SEPOLIA_RPC_URL,
+      chainlinkFeed: env.CHAINLINK_ETH_USD_FEED as `0x${string}`,
+      maxStalenessSec: env.MAX_PRICE_STALENESS_SEC,
+      maxDivergenceBps: env.MAX_PRICE_DIVERGENCE_BPS,
+    }),
     repository,
     new BullExecutionPipeline(executeQueue),
     logger,

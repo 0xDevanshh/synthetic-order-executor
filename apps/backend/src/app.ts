@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 
 import { buildOrderRoutes } from './api/routes/order.routes.js';
 import { healthRoutes } from './api/routes/health.routes.js';
+import { priceRoutes } from './api/routes/price.routes.js';
 import { errorHandler, notFoundHandler } from './api/middleware/errorHandler.js';
 import { orderController, type OrderController } from './api/controllers/order.controller.js';
 
@@ -39,6 +40,7 @@ export function createApp(deps: AppDependencies = {}): Express {
   );
 
   app.use('/health', healthRoutes);
+  app.use('/api/prices', priceRoutes);
   app.use('/api/orders', buildOrderRoutes(deps.orderController ?? orderController));
 
   app.use(notFoundHandler);

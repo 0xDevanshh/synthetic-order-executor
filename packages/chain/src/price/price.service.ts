@@ -1,5 +1,3 @@
-import { Prisma } from '@soe/database';
-
 import {
   PriceUnavailableError,
   PriceUntrustedError,
@@ -79,15 +77,18 @@ export class PriceService {
       throw error;
     }
 
-    const a = new Prisma.Decimal(primary.price);
-    const b = new Prisma.Decimal(secondary.price);
-    if (a.isZero()) throw new PriceUntrustedError('primary price is zero');
+    // Scaled integer arithmetic: both prices are converted to 18-decimal fixed
+    // point, so the comparison never touches a float.
+    const a = toScaled(primary.price);
+    const b = toScaled(secondary.price);
+    if (a === 0n) throw new PriceUntrustedError('primary price is zero');
 
-    const divergenceBps = a.minus(b).abs().dividedBy(a).times(10_000);
+    const diff = a > b ? a - b : b - a;
+    const divergenceBps = (diff * 10_000n) / a;
 
-    if (divergenceBps.greaterThan(this.maxDivergenceBps)) {
+    if (divergenceBps > BigInt(this.maxDivergenceBps)) {
       throw new PriceUntrustedError(
-        `sources diverge by ${divergenceBps.toFixed(0)}bps (max ${this.maxDivergenceBps})`,
+        `sources diverge by ${divergenceBps}bps (max ${this.maxDivergenceBps})`,
         {
           primary: { source: primary.source, price: primary.price },
           secondary: { source: secondary.source, price: secondary.price },
@@ -95,4 +96,10 @@ export class PriceService {
       );
     }
   }
+}
+
+/** Parse a decimal string to 18-decimal fixed point. No float involved. */
+function toScaled(value: string): bigint {
+  const [whole = '0', frac = ''] = value.split('.');
+  return BigInt(whole + frac.padEnd(18, '0').slice(0, 18));
 }

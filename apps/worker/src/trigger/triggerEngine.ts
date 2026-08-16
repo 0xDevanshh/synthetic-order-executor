@@ -1,8 +1,8 @@
 import { isTriggered, type OrderRepository } from '@soe/core';
 import type { Order } from '@soe/database';
 
-import type { PriceQuote } from '../price/PriceProvider.js';
-import type { PriceService } from '../price/price.service.js';
+import type { PriceQuote } from '@soe/chain';
+import type { PriceService } from '@soe/chain';
 import type { Logger } from '../lib/logger.js';
 
 /**

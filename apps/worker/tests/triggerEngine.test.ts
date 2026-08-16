@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Prisma } from '@soe/database';
 
 import { TriggerEngine } from '../src/trigger/triggerEngine.js';
-import { PriceService } from '../src/price/price.service.js';
-import { PriceUnavailableError, PriceUntrustedError } from '../src/price/PriceProvider.js';
+import { PriceService } from '@soe/chain';
+import { PriceUnavailableError, PriceUntrustedError } from '@soe/chain';
 import {
   asRepository,
   FakeOrderRepository,

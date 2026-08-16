@@ -3,7 +3,7 @@ import type IORedis from 'ioredis';
 
 import { QUEUE } from '../queues/names.js';
 import { TriggerEngine } from '../trigger/triggerEngine.js';
-import { PriceUnavailableError, PriceUntrustedError } from '../price/PriceProvider.js';
+import { PriceUnavailableError, PriceUntrustedError } from '@soe/chain';
 import { logger } from '../lib/logger.js';
 
 export const PRICE_WATCHER_JOB = 'evaluate-triggers';

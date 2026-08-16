@@ -37,6 +37,10 @@ const envSchema = z.object({
   EXECUTION_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).default(100),
   DEADLINE_WINDOW_SEC: z.coerce.number().int().positive().default(120),
   DEFAULT_POOL_FEE: z.coerce.number().int().default(3000),
+
+  // Price display for the UI. Same provider set the worker uses.
+  PRICE_PROVIDER: z.enum(['chainlink', 'coingecko', 'static']).default('coingecko'),
+  STATIC_PRICE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
