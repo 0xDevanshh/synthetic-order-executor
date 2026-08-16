@@ -200,6 +200,53 @@ export class OrderRepository {
   }
 
   /**
+   * Force an order to EXECUTED from a non-EXECUTING state.
+   *
+   * RECONCILIATION ONLY. This deliberately bypasses the normal state machine,
+   * because it exists for exactly one situation: the chain says the execution
+   * happened and the database disagrees. The chain wins — a FAILED order whose
+   * executionId is provably consumed is a database lie, and leaving it in place
+   * would show the user a failure for a trade they actually paid for.
+   *
+   * Guarded on `expectedStatus` so it is still a compare-and-swap, and every
+   * call must be accompanied by a ReconciliationLog entry.
+   */
+  async forceExecutedFromReconciliation(params: {
+    id: string;
+    expectedStatus: OrderStatus;
+    txHash?: string;
+    blockNumber?: bigint;
+    amountOut?: bigint;
+    note: string;
+  }): Promise<Order | null> {
+    const result = await this.db.order.updateMany({
+      where: { id: params.id, status: params.expectedStatus },
+      data: {
+        status: 'EXECUTED',
+        ...(params.txHash ? { txHash: params.txHash } : {}),
+        ...(params.blockNumber !== undefined ? { blockNumber: params.blockNumber } : {}),
+        ...(params.amountOut !== undefined
+          ? { amountOut: new Prisma.Decimal(params.amountOut.toString()) }
+          : {}),
+        confirmedAt: new Date(),
+        errorMessage: params.note.slice(0, 500),
+        version: { increment: 1 },
+      },
+    });
+
+    if (result.count === 0) return null;
+    return this.findById(params.id);
+  }
+
+  async findManyByStatus(status: OrderStatus, limit = 100): Promise<Order[]> {
+    return this.db.order.findMany({
+      where: { status },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  /**
    * Orders eligible for triggering. Used by the price watcher once it exists.
    *
    * SELL fires when the market falls to or below the trigger; BUY when it rises

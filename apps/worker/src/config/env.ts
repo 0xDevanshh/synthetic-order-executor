@@ -32,6 +32,13 @@ const envSchema = z.object({
   /** An EXECUTING order older than this is swept. */
   TX_STUCK_AFTER_MS: z.coerce.number().int().min(30_000).default(300_000),
   TX_SWEEP_INTERVAL_MS: z.coerce.number().int().min(10_000).default(60_000),
+
+  RECONCILE_INTERVAL_MS: z.coerce.number().int().min(10_000).default(60_000),
+  /** Blocks re-scanned below the checkpoint each pass, to absorb reorgs. */
+  REORG_BUFFER_BLOCKS: z.coerce.number().int().min(0).default(12),
+  /** Cap on the block span scanned per pass, to bound RPC cost. */
+  RECONCILE_MAX_BLOCK_RANGE: z.coerce.number().int().positive().default(5_000),
+  RECONCILE_AUDIT_LIMIT: z.coerce.number().int().positive().max(1_000).default(100),
 });
 
 export type Env = z.infer<typeof envSchema>;

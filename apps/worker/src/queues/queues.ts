@@ -55,6 +55,10 @@ export function createTxMonitorQueue(connection: IORedis): Queue {
   return new Queue(QUEUE.TX_MONITOR, { connection });
 }
 
+export function createReconcilerQueue(connection: IORedis): Queue {
+  return new Queue(QUEUE.RECONCILER, { connection });
+}
+
 /**
  * Handoff from the executor to the transaction monitor.
  *

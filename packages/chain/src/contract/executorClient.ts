@@ -14,6 +14,15 @@ import { createReadClient, createSigningClient } from '../clients.js';
 import type { ChainConfig } from '../config.js';
 import { NoSignerError, type ExecutionParams } from '../dex/DexAdapter.js';
 
+export interface SwapExecutedLog {
+  executionId: Hex;
+  owner: Address;
+  amountIn: bigint;
+  amountOut: bigint;
+  txHash: Hex;
+  blockNumber: bigint;
+}
+
 export interface ExecutorContractState {
   paused: boolean;
   executor: Address;
@@ -107,6 +116,45 @@ export class ExecutorContractClient {
       this.read.readContract({ ...this.contract, functionName: 'weth' }),
     ]);
     return { paused, executor, swapRouter, weth };
+  }
+
+  /**
+   * SwapExecuted events in a block range.
+   *
+   * The reconciler's primary evidence. `executionId` is an indexed topic, so
+   * every event maps back to exactly one order with no ambiguity — which is what
+   * makes log-driven backfill idempotent: re-scanning the same range produces
+   * the same set of executions, and re-applying them is a no-op.
+   */
+  async getSwapExecutedLogs(fromBlock: bigint, toBlock: bigint): Promise<SwapExecutedLog[]> {
+    const logs = await this.read.getContractEvents({
+      address: this.address,
+      abi: syntheticOrderExecutorAbi,
+      eventName: 'SwapExecuted',
+      fromBlock,
+      toBlock,
+    });
+
+    return logs.map((log) => {
+      const args = log.args as unknown as {
+        executionId: Hex;
+        owner: Address;
+        amountIn: bigint;
+        amountOut: bigint;
+      };
+      return {
+        executionId: args.executionId,
+        owner: args.owner,
+        amountIn: args.amountIn,
+        amountOut: args.amountOut,
+        txHash: log.transactionHash as Hex,
+        blockNumber: log.blockNumber as bigint,
+      };
+    });
+  }
+
+  async getBlockNumber(): Promise<bigint> {
+    return this.read.getBlockNumber();
   }
 
   // -------------------------------------------------------------------------

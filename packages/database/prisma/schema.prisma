@@ -11,6 +11,43 @@ datasource db {
   directUrl = env("DIRECT_DATABASE_URL")
 }
 
+/// Last block scanned for SwapExecuted logs.
+///
+/// Single row (id = "default"). The reconciler always re-scans the last
+/// REORG_BUFFER_BLOCKS before this point, because a block that was canonical on
+/// the previous pass may not be on this one.
+model IndexerCheckpoint {
+  id                 String   @id @default("default")
+  lastProcessedBlock BigInt
+  updatedAt          DateTime @updatedAt
+
+  @@map("indexer_checkpoints")
+}
+
+/// Every correction the reconciler makes, and every discrepancy it declines to
+/// auto-correct.
+///
+/// Silent self-healing destroys the ability to debug an execution engine: if
+/// the database quietly repairs itself, nobody ever learns which code path was
+/// wrong. Every write here is a signal that something upstream misbehaved.
+model ReconciliationLog {
+  id      String  @id @default(uuid())
+  orderId String?
+  /// STUCK_EXECUTING | LOG_BACKFILL | FAILED_BUT_EXECUTED | EXECUTED_NO_EVIDENCE
+  kind    String
+  /// What the database claimed versus what the chain said.
+  discrepancy String
+  /// What was done about it, including "logged only, not auto-corrected".
+  resolution  String
+  txHash      String?
+  blockNumber BigInt?
+  createdAt   DateTime @default(now())
+
+  @@index([orderId])
+  @@index([kind, createdAt])
+  @@map("reconciliation_logs")
+}
+
 enum OrderStatus {
   PENDING
   TRIGGERED

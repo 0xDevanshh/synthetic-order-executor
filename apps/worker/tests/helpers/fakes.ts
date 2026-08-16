@@ -192,6 +192,47 @@ export class FakeOrderRepository {
   async findById(id: string): Promise<Order | null> {
     return this.orders.get(id) ?? null;
   }
+
+  async findByExecutionId(executionId: string): Promise<Order | null> {
+    return (
+      [...this.orders.values()].find(
+        (o) => o.executionId.toLowerCase() === executionId.toLowerCase(),
+      ) ?? null
+    );
+  }
+
+  async findManyByStatus(status: OrderStatus, limit = 100): Promise<Order[]> {
+    return [...this.orders.values()].filter((o) => o.status === status).slice(0, limit);
+  }
+
+  async forceExecutedFromReconciliation(params: {
+    id: string;
+    expectedStatus: OrderStatus;
+    txHash?: string;
+    blockNumber?: bigint;
+    amountOut?: bigint;
+    note: string;
+  }): Promise<Order | null> {
+    const order = this.orders.get(params.id);
+    if (!order || order.status !== params.expectedStatus) return null;
+
+    const updated: Order = {
+      ...order,
+      status: 'EXECUTED',
+      ...(params.txHash ? { txHash: params.txHash } : {}),
+      ...(params.blockNumber !== undefined ? { blockNumber: params.blockNumber } : {}),
+      amountOut:
+        params.amountOut !== undefined
+          ? new Prisma.Decimal(params.amountOut.toString())
+          : order.amountOut,
+      confirmedAt: new Date(),
+      errorMessage: params.note.slice(0, 500),
+      version: order.version + 1,
+      updatedAt: new Date(),
+    };
+    this.orders.set(params.id, updated);
+    return updated;
+  }
 }
 
 export class FakePipeline implements ExecutionPipeline {

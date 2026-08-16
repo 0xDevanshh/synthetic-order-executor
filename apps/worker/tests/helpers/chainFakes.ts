@@ -8,6 +8,7 @@ import type {
   DexQuote,
   ExecutionParams,
   ExecutorContractClient,
+  SwapExecutedLog,
   QuoteRequest,
 } from '@soe/chain';
 
@@ -48,12 +49,30 @@ export class FakeExecutorClient {
   submitted: ExecutionParams[] = [];
   txHash: Hex = `0x${'ab'.repeat(32)}`;
 
+  /** Reconciliation surface. */
+  logs: SwapExecutedLog[] = [];
+  logsError: Error | undefined;
+  isExecutedError: Error | undefined;
+  isExecutedCalls: Hex[] = [];
+  headBlock = 11_500_100n;
+
   setBalance(user: Address, token: Address, amount: bigint): void {
     this.balances.set(`${getAddress(user)}:${getAddress(token)}`, amount);
   }
 
   async isExecuted(executionId: Hex): Promise<boolean> {
+    this.isExecutedCalls.push(executionId);
+    if (this.isExecutedError) throw this.isExecutedError;
     return this.executed.has(executionId.toLowerCase());
+  }
+
+  async getBlockNumber(): Promise<bigint> {
+    return this.headBlock;
+  }
+
+  async getSwapExecutedLogs(): Promise<SwapExecutedLog[]> {
+    if (this.logsError) throw this.logsError;
+    return this.logs;
   }
 
   async getBalance(user: Address, token: Address): Promise<bigint> {
@@ -172,4 +191,38 @@ export class FakeMonitorPipeline {
 
 export function asMonitor(fake: FakeTransactionMonitor): TransactionMonitor {
   return fake as unknown as TransactionMonitor;
+}
+
+/** In-memory checkpoint + audit trail for reconciliation tests. */
+export class FakeReconciliationRepository {
+  checkpoint: bigint | null = null;
+  entries: {
+    orderId?: string;
+    kind: string;
+    discrepancy: string;
+    resolution: string;
+    txHash?: string;
+    blockNumber?: bigint;
+  }[] = [];
+
+  async getCheckpoint(): Promise<{ lastProcessedBlock: bigint } | null> {
+    return this.checkpoint === null ? null : { lastProcessedBlock: this.checkpoint };
+  }
+
+  async setCheckpoint(blockNumber: bigint): Promise<void> {
+    // Mirrors the real repository: never moves backwards.
+    if (this.checkpoint !== null && this.checkpoint >= blockNumber) return;
+    this.checkpoint = blockNumber;
+  }
+
+  async log(entry: {
+    orderId?: string;
+    kind: string;
+    discrepancy: string;
+    resolution: string;
+    txHash?: string;
+    blockNumber?: bigint;
+  }): Promise<void> {
+    this.entries.push(entry);
+  }
 }

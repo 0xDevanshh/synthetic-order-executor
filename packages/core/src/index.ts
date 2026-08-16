@@ -10,3 +10,4 @@ export * from './domain/orderStatus.js';
 export * from './domain/executionId.js';
 export * from './domain/trigger.js';
 export * from './repositories/order.repository.js';
+export * from './repositories/reconciliation.repository.js';

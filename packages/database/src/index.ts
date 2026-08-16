@@ -6,6 +6,12 @@
  * migrations use DIRECT_DATABASE_URL instead, since PgBouncer cannot run them.
  */
 export { PrismaClient, Prisma } from '@prisma/client';
-export type { Order, OrderStatus, OrderSide } from '@prisma/client';
+export type {
+  Order,
+  OrderStatus,
+  OrderSide,
+  IndexerCheckpoint,
+  ReconciliationLog,
+} from '@prisma/client';
 
 export { prisma } from './client.js';
