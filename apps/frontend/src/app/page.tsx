@@ -1,59 +1,53 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { CreateOrderForm } from '@/components/CreateOrderForm';
 import { OrderTable } from '@/components/OrderTable';
 import { PriceTicker } from '@/components/PriceTicker';
+import { ConnectWallet } from '@/components/ConnectWallet';
+import { useWallet } from '@/hooks/useWallet';
 import { api, type Order } from '@/lib/api';
-
-const STORAGE_KEY = 'soe:userAddress';
-const DEMO_ADDRESS = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
 /**
  * Single-page demo of the full pipeline.
  *
- * The address is typed rather than wallet-connected. That is a deliberate
- * simplification: this page exists to demonstrate the execution system, and a
- * wallet connector would add a dependency without exercising any more of it.
- * Real deposits still require the wallet, since only the depositor can withdraw.
+ * The connected wallet address is the order owner. It is the same address that
+ * must hold a vault balance in the contract — the executor debits that balance
+ * and credits the proceeds straight back to it, so an order for an address with
+ * no deposit will fail its pre-flight check.
  */
 export default function Page() {
-  const [userAddress, setUserAddress] = useState('');
+  const wallet = useWallet();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setUserAddress(window.localStorage.getItem(STORAGE_KEY) ?? DEMO_ADDRESS);
-  }, []);
-
-  useEffect(() => {
-    if (userAddress) window.localStorage.setItem(STORAGE_KEY, userAddress);
-  }, [userAddress]);
+  const address = wallet.address;
 
   const refresh = useCallback(async () => {
     try {
-      const isValid = /^0x[a-fA-F0-9]{40}$/.test(userAddress);
-      setOrders(await api.listOrders(isValid ? userAddress : undefined));
+      // No wallet, no orders. Showing every user's orders to an unconnected
+      // visitor would be wrong, and filtering by a placeholder address would be
+      // worse — it would look like the connected user has orders they don't.
+      setOrders(address ? await api.listOrders(address) : []);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [userAddress]);
+  }, [address]);
 
   // Poll rather than subscribe. Order state changes come from three independent
-  // background workers, so there is no single request whose response could carry
-  // the final status — polling is the honest model for this system.
+  // background workers, so no single request's response could carry the final
+  // status — polling is the honest model for this system.
   useEffect(() => {
     void refresh();
     const timer = setInterval(refresh, 5_000);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  const ready = Boolean(address) && !wallet.wrongNetwork;
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 px-4 py-10">
@@ -66,22 +60,20 @@ export default function Page() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <PriceTicker />
-
-        <Card>
-          <CardContent className="space-y-1.5 p-4">
-            <Label htmlFor="address">Wallet address</Label>
-            <Input
-              id="address"
-              value={userAddress}
-              onChange={(e) => setUserAddress(e.target.value.trim())}
-              placeholder="0x…"
-              className="font-mono text-xs"
-            />
-          </CardContent>
-        </Card>
+        <ConnectWallet wallet={wallet} />
       </div>
 
-      <CreateOrderForm userAddress={userAddress} onCreated={refresh} />
+      {ready ? (
+        <CreateOrderForm userAddress={address!} onCreated={refresh} />
+      ) : (
+        <div className="rounded-xl border border-dashed p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            {wallet.wrongNetwork
+              ? 'Switch your wallet to Sepolia to create orders.'
+              : 'Connect your wallet to create an order.'}
+          </p>
+        </div>
+      )}
 
       {error && (
         <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -89,7 +81,7 @@ export default function Page() {
         </p>
       )}
 
-      <OrderTable orders={orders} loading={loading} onChanged={refresh} />
+      {address && <OrderTable orders={orders} loading={loading} onChanged={refresh} />}
 
       <footer className="pt-2 text-xs text-muted-foreground">
         Contract{' '}
